@@ -1,0 +1,395 @@
+# easy_ViTPose
+<p align="center">
+<img src="https://user-images.githubusercontent.com/24314647/236082274-b25a70c8-9267-4375-97b0-eddf60a7dfc6.png" width=375> easy_ViTPose
+</p>
+
+## Accurate 2d human and animal pose estimation
+
+<a target="_blank" href="https://colab.research.google.com/github/JunkyByte/easy_ViTPose/blob/main/colab_demo.ipynb">
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+</a>
+
+### Easy to use SOTA `ViTPose` [Y. Xu et al., 2022] models for fast inference.  
+We provide all the VitPose original models, converted for inference, with single dataset format output.
+
+In addition to that we also provide a Coco-25 model, trained on the original coco dataset + feet https://cmu-perceptual-computing-lab.github.io/foot_keypoint_dataset/
+
+> [!WARNING]
+> Ultralytics `yolov8` has issue with wrong bounding boxes when using `mps`, upgrade to latest version! (Works correctly on 8.2.48)
+
+## Results
+![resimg](https://github.com/JunkyByte/easy_ViTPose/assets/24314647/51c0777f-b268-448a-af02-9a3537f288d8)
+
+https://github.com/JunkyByte/easy_ViTPose/assets/24314647/e9a82c17-6e99-4111-8cc8-5257910cb87e
+
+https://github.com/JunkyByte/easy_ViTPose/assets/24314647/63af44b1-7245-4703-8906-3f034a43f9e3
+
+(Credits dance: https://www.youtube.com/watch?v=p-rSdt0aFuw )  
+(Credits zebras: https://www.youtube.com/watch?v=y-vELRYS8Yk )
+
+## Features
+- Image / Video / Webcam support
+- Video support using SORT algorithm to track bboxes between frames
+- Torch / ONNX / Tensorrt inference
+- Runs the original VitPose checkpoints from [ViTAE-Transformer/ViTPose](https://github.com/ViTAE-Transformer/ViTPose)
+- 4 ViTPose architectures with different sizes and performances (s: small, b: base, l: large, h: huge)
+- Multi skeleton and dataset: (AIC / MPII / COCO / COCO + FEET / COCO WHOLEBODY / APT36k / AP10k)
+- Human / Animal pose estimation
+- cpu / gpu / metal support
+- show and save images / videos and output to json
+
+We run YOLOv8 for detection, it does not provide complete animal detection. You can finetune a custom yolo model to detect the animal you are interested in,
+if you do please open an issue, we might want to integrate other models for detection.
+
+### Benchmark:
+You can expect realtime >30 fps with modern nvidia gpus and apple silicon (using metal!).  
+
+### Skeleton reference
+There are multiple skeletons for different dataset. Check the definition here [visualization.py](https://github.com/JunkyByte/easy_ViTPose/blob/main/easy_ViTPose/vit_utils/visualization.py).
+
+## Installation and Usage
+> [!IMPORTANT]
+> Install `torch>2.0 with cuda / mps support` by yourself.
+> also check `requirements_gpu.txt`.
+
+```bash
+git clone git@github.com:JunkyByte/easy_ViTPose.git
+cd easy_ViTPose/
+pip install -e .
+pip install -r requirements.txt
+```
+
+### Download models
+- Download the models from [Huggingface](https://huggingface.co/JunkyByte/easy_ViTPose)
+We provide torch models for every dataset and architecture.  
+If you want to run onnx / tensorrt inference download the appropriate torch ckpt and use `export.py` to convert it.  
+You can use `ultralytics` `yolo export` command to export yolo to onnx and tensorrt as well.
+
+#### Export to onnx and tensorrt
+```bash
+$ python export.py --help
+usage: export.py [-h] --model-ckpt MODEL_CKPT --model-name {s,b,l,h} [--output OUTPUT] [--dataset DATASET]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --model-ckpt MODEL_CKPT
+                        The torch model that shall be used for conversion
+  --model-name {s,b,l,h}
+                        [s: ViT-S, b: ViT-B, l: ViT-L, h: ViT-H]
+  --output OUTPUT       File (without extension) or dir path for checkpoint output
+  --dataset DATASET     Name of the dataset. If None it"s extracted from the file name. ["coco", "coco_25",
+                        "wholebody", "mpii", "ap10k", "apt36k", "aic"]
+```
+
+### Run inference
+To run inference from command line you can use the `inference.py` script as follows:  
+```bash
+$ python inference.py --help
+usage: inference.py [-h] [--input INPUT] [--output-path OUTPUT_PATH] --model MODEL [--yolo YOLO] [--dataset DATASET]
+                    [--det-class DET_CLASS] [--model-name {s,b,l,h}] [--yolo-size YOLO_SIZE]
+                    [--conf-threshold CONF_THRESHOLD] [--rotate {0,90,180,270}] [--yolo-step YOLO_STEP]
+                    [--single-pose] [--show] [--show-yolo] [--show-raw-yolo] [--save-img] [--save-json]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --input INPUT         path to image / video or webcam ID (=cv2)
+  --output-path OUTPUT_PATH
+                        output path, if the path provided is a directory output files are "input_name
+                        +_result{extension}".
+  --model MODEL         checkpoint path of the model
+  --yolo YOLO           checkpoint path of the yolo model
+  --dataset DATASET     Name of the dataset. If None it"s extracted from the file name. ["coco", "coco_25",
+                        "wholebody", "mpii", "ap10k", "apt36k", "aic"]
+  --det-class DET_CLASS
+                        ["human", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
+                        "animals"]
+  --model-name {s,b,l,h}
+                        [s: ViT-S, b: ViT-B, l: ViT-L, h: ViT-H]
+  --yolo-size YOLO_SIZE
+                        YOLOv8 image size during inference
+  --conf-threshold CONF_THRESHOLD
+                        Minimum confidence for keypoints to be drawn. [0, 1] range
+  --rotate {0,90,180,270}
+                        Rotate the image of [90, 180, 270] degress counterclockwise
+  --yolo-step YOLO_STEP
+                        The tracker can be used to predict the bboxes instead of yolo for performance, this flag
+                        specifies how often yolo is applied (e.g. 1 applies yolo every frame). This does not have any
+                        effect when is_video is False
+  --single-pose         Do not use SORT tracker because single pose is expected in the video
+  --show                preview result during inference
+  --show-yolo           draw yolo results
+  --show-raw-yolo       draw yolo result before that SORT is applied for tracking (only valid during video inference)
+  --save-img            save image results
+  --save-json           save json results
+```
+
+You can run inference from code as follows:
+```python
+import cv2
+from easy_ViTPose import VitInference
+
+# Image to run inference RGB format
+img = cv2.imread('./examples/img1.jpg')
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+# set is_video=True to enable tracking in video inference
+# be sure to use VitInference.reset() function to reset the tracker after each video
+# There are a few flags that allows to customize VitInference, be sure to check the class definition
+model_path = './ckpts/vitpose-s-coco_25.pth'
+yolo_path = './yolov8s.pth'
+
+# If you want to use MPS (on new macbooks) use the torch checkpoints for both ViTPose and Yolo
+# If device is None will try to use cuda -> mps -> cpu (otherwise specify 'cpu', 'mps' or 'cuda')
+# dataset and det_class parameters can be inferred from the ckpt name, but you can specify them.
+model = VitInference(model_path, yolo_path, model_name='s', yolo_size=320, is_video=False, device=None)
+
+# Infer keypoints, output is a dict where keys are person ids and values are keypoints (np.ndarray (25, 3): (y, x, score))
+# If is_video=True the IDs will be consistent among the ordered video frames.
+keypoints = model.inference(img)
+
+# call model.reset() after each video
+
+img = model.draw(show_yolo=True)  # Returns RGB image with drawings
+cv2.imshow('image', cv2.cvtColor(img, cv2.COLOR_RGB2BGR)); cv2.waitKey(0)
+```
+> [!NOTE]
+> If the input file is a video [SORT](https://github.com/abewley/sort) is used to track people IDs and output consistent identifications.
+
+### OUTPUT json format
+The output format of the json files:
+
+```
+{
+    "keypoints":
+    [  # The list of frames, len(json['keypoints']) == len(video)
+        {  # For each frame a dict
+            "0": [  #  keys are id to track people and value the keypoints
+                [121.19, 458.15, 0.99], # Each keypoint is (y, x, score)
+                [110.02, 469.43, 0.98],
+                [110.86, 445.04, 0.99],
+            ],
+            "1": [
+                ...
+            ],
+        },
+        {
+            "0": [
+                [122.19, 458.15, 0.91],
+                [105.02, 469.43, 0.95],
+                [122.86, 445.04, 0.99],
+            ],
+            "1": [
+                ...
+            ]
+        }
+    ],
+    "skeleton":
+    {  # Skeleton reference, key the idx, value the name
+        "0": "nose",
+        "1": "left_eye",
+        "2": "right_eye",
+        "3": "left_ear",
+        "4": "right_ear",
+        "5": "neck",
+        ...
+    }
+}
+```
+
+---
+
+## Web UI (Flask demo app)
+
+`webapp/` contains a small Flask app for uploading an image/video and viewing pose
+results in the browser (progress bar, raw keypoint table, downloadable JSON).
+
+```bash
+source .venv/bin/activate
+python webapp/app.py
+# open http://127.0.0.1:5050
+```
+
+### Shuttlecock detection (Roboflow workflow)
+
+Besides the local ViTPose modes ("Manusia" / "Hewan"), the web UI has a third mode
+that calls a Roboflow-hosted workflow ("Shuttlecock Detection") over HTTP instead of
+running a local model. It supports both images and video (video is processed by
+calling the workflow once per extracted frame — this is **not** real-time/webcam
+streaming; that would need Roboflow's separate WebRTC integration).
+
+**Setup:**
+
+1. Get a **Private API Key** from [app.roboflow.com/settings/api](https://app.roboflow.com/settings/api)
+   (not the Publishable key — that one's meant for client-side/browser code).
+2. Set it, either way works (never hardcode it in the source):
+   - **File** (easiest): `cp webapp/.env.example webapp/.env`, then open `webapp/.env`
+     and paste your key after `ROBOFLOW_API_KEY=`. It's gitignored, so it's never
+     committed.
+   - **Env var**: `export ROBOFLOW_API_KEY='rf_xxxxxxxxxxxx'` before starting the
+     server — this always takes priority over the `.env` file if both are set.
+3. Start the server (`python webapp/app.py`), then in the web UI pick "Shuttlecock /
+   Kok Badminton (Roboflow)" as the mode and upload an image or video.
+
+**Files:**
+- `webapp/shuttlecock_client.py` — the API client (`run_shuttlecock_workflow`,
+  defensive output parsing, retries with backoff, timeout). Uses plain `requests`
+  rather than the official `inference-sdk` package — see the module docstring for why
+  (a real dependency conflict: `inference-sdk` pulls in `scipy>=2.0`-requiring
+  `supervision`, which breaks this project's torch/numpy<2 stack in the same venv).
+- `webapp/smoke_test_shuttlecock.py` — manual smoke test:
+  ```bash
+  export ROBOFLOW_API_KEY='rf_xxxxxxxxxxxx'
+  python webapp/smoke_test_shuttlecock.py path/to/photo.jpg
+  ```
+
+> [!WARNING]
+> **Unverified output schema.** This integration was built without a live call to the
+> workflow (no Roboflow MCP session or API key was available while writing it). The
+> request/response *transport* (endpoint URL, JSON shape) is grounded against
+> `inference-sdk`'s own source, but this specific workflow's *output field names* were
+> never observed. `split_workflow_outputs()` classifies outputs by value shape
+> (image-looking base64 blob vs. list of detection dicts) instead of hardcoded key
+> names, so it should work regardless — but run `smoke_test_shuttlecock.py` with a
+> real API key and check its printed output against what you expect before relying on
+> this in the UI.
+>
+> **Cost note:** video mode makes one Roboflow API call per frame — a 5s/25fps clip
+> is ~125 calls. Check [roboflow.com/pricing](https://roboflow.com/pricing) for your
+> plan's credits before processing long videos.
+
+---
+
+## Finetuning
+
+> [!NOTE]
+> easy_ViTPose supports finetuning again! Many thanks to [@CatoTea](https://github.com/CatoTea) for adding it back 🚀
+
+This guide provides the general process to finetune ViTPose on your own custom dataset.
+### 1. Prepare Pre-trained Checkpoint
+
+- Download an official ViTPose checkpoint from the [official release](https://github.com/ViTAE-Transformer/ViTPose).
+- Convert the official checkpoint into a single-head model suitable for fine-tuning.
+  ```bash
+  python ./model_split.py --source SOURCE --prefix PREFIX --target TARGET
+  ```
+- Set the checkpoint path for resuming from the model in:
+
+  ```./easy_ViTPose/config.yaml```
+### 2. Prepare Dataset
+- Prepare your dataset in **COCO format** with the following directory structure:
+    ```
+    data/
+    ├── train/
+    │   ├── config/
+    │   │   └── config.json
+    │   └── images/
+    │       ├── file_name_0.jpg
+    │       ├── file_name_1.jpg
+    │       ├── file_name_2.jpg
+    │       └── ...
+    ├── val/...
+    └── test/...
+    ```
+    or modify ```./easy_ViTPose/datasets/COCO.py``` to fit your own structure if necessary.
+
+- Configure attributes in ```./easy_ViTPose/datasets/COCO.py``` according to your dataset:
+    - ```self.kpt_id```
+    - ```self.upper_body_ids```
+    - ```self.lower_body_ids```
+    - ```self.joints_weight```
+
+### 3. Configure and Start Training
+- Edit your training config at:
+  ```./easy_ViTPose/configs/train_configs/ViTPose_large_coco_256x192_custom.py```
+
+> [!NOTE]
+> This is a sample config file for ViTPose large; you can refer to other config files for customization.
+
+- Start training:
+  ```bash
+  python train.py --config-path config.yaml --model-name 'c' --freeze-backbone False
+  ```
+
+### 4. Inference on Custom Data
+- Edit number of keypoints in ```./easy_ViTPose/configs/ViTPose_custom.py```.
+- Modify the ```joints_dict()``` dictionary for visualization in ```./easy_ViTPose/vit_utils/visualization.py``` to fit your custom data.
+- Run the following example command with your YOLO detection class and dataset name:
+```bash
+python inference.py --input INPUT_PATH --model ./best.pth --yolo ./yolo11x.pt --dataset custom --model-name l --output-path OUTPUT_PATH --det-class cow --save-img --save-json --show-yolo  --conf-threshold 0.25 --yolo-size 640
+```
+
+
+---
+
+---
+
+## Evaluation on COCO dataset
+1. Download COCO dataset images and labels
+    - 2017 Val images [5K/1GB]: http://images.cocodataset.org/zips/val2017.zip <br>
+        The extracted directory looks like this:
+        ```
+        val2017/              
+        ├── 000000000139.jpg
+        ├── 000000000285.jpg
+        ├── 000000000632.jpg
+        └── ...
+        ```  
+    - 2017 Train/Val annotations [241MB]: http://images.cocodataset.org/annotations/annotations_trainval2017.zip <br>
+        The extracted directory looks like this:
+        ```
+        annotations/              
+        ├── person_keypoints_val2017.json
+        ├── person_keypoints_train2017.json
+        └── ...
+        ```  
+
+2. Run the following command:
+
+    ```bash
+
+    $ python evaluation_on_coco.py
+
+    Command line arguments:
+        --model_path: Path to the pretrained ViT Pose model
+        
+        --yolo_path: Path to the YOLOv8 model
+
+        --img_folder_path: Path to the directory containing COCO val images (/val2017 extracted in step 1). 
+
+        --annFile: Path to json file for COCO keypoints for val set (annotations/person_keypoints_val2017.json extracted in step 1)
+    ```
+
+---
+
+
+## Docker
+The system may be built in a container using Docker. This is intended to demonstrate container-wise inference, adapt it to your own needs by changing models and skeletons:
+
+`docker build . -t easy_vitpose`
+
+The image is based on NVIDIA's PyTorch image, which is 20GB large. 
+If you have a compatible GPU set up with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), 
+ViTPose will run with hardware acceleration.
+
+To test an example, create a folder called `cats` with a picture of a cat as `image.jpg`. 
+Run `./models/download.sh` to fetch the large yolov8 and ap10k ViTPose models. Then run inference using the following command (replace with the correct `cats` and `models` paths):
+
+`docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -v ./models:/models -v ~/cats:/cats easy_vitpose python inference.py --det-class cat --input /cats/image.jpg --output-path /cats --save-img --model /models/vitpose-l-ap10k.onnx --yolo /models/yolov8l.pt`
+
+The result image may be viewed in your `cats` folder.
+
+## TODO:
+- refactor finetuning (currently not available)
+- benchmark and check bottlenecks of inference pipeline
+- parallel batched inference
+- other minor fixes
+- yolo version for animal pose, check https://github.com/JunkyByte/easy_ViTPose/pull/18
+- solve cuda exceptions on script exit when using tensorrt (no idea how)
+- add infos about inferred informations during inference, better output of inference status (device etc)
+- check if is possible to make colab work without runtime restart
+
+Feel free to open issues, pull requests and contribute on these TODOs.
+
+## Reference
+Thanks to the VitPose authors and their official implementation [ViTAE-Transformer/ViTPose](https://github.com/ViTAE-Transformer/ViTPose).  
+The SORT code is taken from [abewley/sort](https://github.com/abewley/sort)
