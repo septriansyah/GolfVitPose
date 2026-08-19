@@ -1,395 +1,177 @@
-# easy_ViTPose
-<p align="center">
-<img src="https://user-images.githubusercontent.com/24314647/236082274-b25a70c8-9267-4375-97b0-eddf60a7dfc6.png" width=375> easy_ViTPose
-</p>
+# GolfVitPose
 
-## Accurate 2d human and animal pose estimation
+Pose-estimation toolkit built on top of [easy_ViTPose](https://github.com/JunkyByte/easy_ViTPose) (ViTPose + YOLOv8),
+extended with a Flask web app and a batch pipeline for golf-swing analysis (GolfDB) and badminton
+analysis (shuttlecock detection, court position tracking, TrackNetV3 trajectory tracking).
 
-<a target="_blank" href="https://colab.research.google.com/github/JunkyByte/easy_ViTPose/blob/main/colab_demo.ipynb">
-  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
-</a>
+## What's in this repo
 
-### Easy to use SOTA `ViTPose` [Y. Xu et al., 2022] models for fast inference.  
-We provide all the VitPose original models, converted for inference, with single dataset format output.
+- **`easy_ViTPose/`** — the base pose-estimation library (ViTPose models + YOLOv8 person/animal
+  detector). Human and animal 2D pose estimation, image/video/webcam, ONNX/Torch/TensorRT inference.
+- **`webapp/`** — a Flask app with two parts:
+  - an **upload page** (`/`) for one-off image/video processing across 6 modes (pose, shuttlecock,
+    combined, court tracking, TrackNetV3, golf body+club);
+  - a **GolfDB batch page** (`/golfdb`) for processing the [GolfDB](https://github.com/wmcnally/GolfDB)
+    dataset in bulk — one swing, several, or "everything not done yet" — with per-frame progress, a
+    click-to-edit UI for correcting club keypoints, and combined CSV exports for downstream analysis
+    (clustering, ML).
+- **`golf_inference.py`** — the standalone CLI the batch page runs under the hood (body pose + golf
+  club grip/head detection, labeled against GolfDB's swing events).
+- **`tracknet_v3/`** — vendored [TrackNetV3](https://github.com/qaz812345/TrackNetV3) (shuttlecock
+  trajectory tracking: heatmap CNN + trajectory-rectification network), used locally (no external API)
+  by the webapp's TrackNetV3 mode.
 
-In addition to that we also provide a Coco-25 model, trained on the original coco dataset + feet https://cmu-perceptual-computing-lab.github.io/foot_keypoint_dataset/
-
-> [!WARNING]
-> Ultralytics `yolov8` has issue with wrong bounding boxes when using `mps`, upgrade to latest version! (Works correctly on 8.2.48)
-
-## Results
-![resimg](https://github.com/JunkyByte/easy_ViTPose/assets/24314647/51c0777f-b268-448a-af02-9a3537f288d8)
-
-https://github.com/JunkyByte/easy_ViTPose/assets/24314647/e9a82c17-6e99-4111-8cc8-5257910cb87e
-
-https://github.com/JunkyByte/easy_ViTPose/assets/24314647/63af44b1-7245-4703-8906-3f034a43f9e3
-
-(Credits dance: https://www.youtube.com/watch?v=p-rSdt0aFuw )  
-(Credits zebras: https://www.youtube.com/watch?v=y-vELRYS8Yk )
-
-## Features
-- Image / Video / Webcam support
-- Video support using SORT algorithm to track bboxes between frames
-- Torch / ONNX / Tensorrt inference
-- Runs the original VitPose checkpoints from [ViTAE-Transformer/ViTPose](https://github.com/ViTAE-Transformer/ViTPose)
-- 4 ViTPose architectures with different sizes and performances (s: small, b: base, l: large, h: huge)
-- Multi skeleton and dataset: (AIC / MPII / COCO / COCO + FEET / COCO WHOLEBODY / APT36k / AP10k)
-- Human / Animal pose estimation
-- cpu / gpu / metal support
-- show and save images / videos and output to json
-
-We run YOLOv8 for detection, it does not provide complete animal detection. You can finetune a custom yolo model to detect the animal you are interested in,
-if you do please open an issue, we might want to integrate other models for detection.
-
-### Benchmark:
-You can expect realtime >30 fps with modern nvidia gpus and apple silicon (using metal!).  
-
-### Skeleton reference
-There are multiple skeletons for different dataset. Check the definition here [visualization.py](https://github.com/JunkyByte/easy_ViTPose/blob/main/easy_ViTPose/vit_utils/visualization.py).
-
-## Installation and Usage
-> [!IMPORTANT]
-> Install `torch>2.0 with cuda / mps support` by yourself.
-> also check `requirements_gpu.txt`.
+## Setup
 
 ```bash
-git clone git@github.com:JunkyByte/easy_ViTPose.git
-cd easy_ViTPose/
+python -m venv .venv && source .venv/bin/activate
 pip install -e .
-pip install -r requirements.txt
+pip install -r requirements.txt   # add torch yourself first, see requirements_gpu.txt for CUDA/MPS
 ```
 
 ### Download models
-- Download the models from [Huggingface](https://huggingface.co/JunkyByte/easy_ViTPose)
-We provide torch models for every dataset and architecture.  
-If you want to run onnx / tensorrt inference download the appropriate torch ckpt and use `export.py` to convert it.  
-You can use `ultralytics` `yolo export` command to export yolo to onnx and tensorrt as well.
+Get the ViTPose + YOLOv8 checkpoints from [Huggingface](https://huggingface.co/JunkyByte/easy_ViTPose)
+and place them under `models/` (e.g. `models/vitpose-l-coco.onnx`, `models/vitpose-l-ap10k.onnx`,
+`models/yolov8l.pt`). For TrackNetV3, download `TrackNet_best.pt` + `InpaintNet_best.pt` and place them
+under `models/tracknet/`.
 
-#### Export to onnx and tensorrt
-```bash
-$ python export.py --help
-usage: export.py [-h] --model-ckpt MODEL_CKPT --model-name {s,b,l,h} [--output OUTPUT] [--dataset DATASET]
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --model-ckpt MODEL_CKPT
-                        The torch model that shall be used for conversion
-  --model-name {s,b,l,h}
-                        [s: ViT-S, b: ViT-B, l: ViT-L, h: ViT-H]
-  --output OUTPUT       File (without extension) or dir path for checkpoint output
-  --dataset DATASET     Name of the dataset. If None it"s extracted from the file name. ["coco", "coco_25",
-                        "wholebody", "mpii", "ap10k", "apt36k", "aic"]
-```
-
-### Run inference
-To run inference from command line you can use the `inference.py` script as follows:  
-```bash
-$ python inference.py --help
-usage: inference.py [-h] [--input INPUT] [--output-path OUTPUT_PATH] --model MODEL [--yolo YOLO] [--dataset DATASET]
-                    [--det-class DET_CLASS] [--model-name {s,b,l,h}] [--yolo-size YOLO_SIZE]
-                    [--conf-threshold CONF_THRESHOLD] [--rotate {0,90,180,270}] [--yolo-step YOLO_STEP]
-                    [--single-pose] [--show] [--show-yolo] [--show-raw-yolo] [--save-img] [--save-json]
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --input INPUT         path to image / video or webcam ID (=cv2)
-  --output-path OUTPUT_PATH
-                        output path, if the path provided is a directory output files are "input_name
-                        +_result{extension}".
-  --model MODEL         checkpoint path of the model
-  --yolo YOLO           checkpoint path of the yolo model
-  --dataset DATASET     Name of the dataset. If None it"s extracted from the file name. ["coco", "coco_25",
-                        "wholebody", "mpii", "ap10k", "apt36k", "aic"]
-  --det-class DET_CLASS
-                        ["human", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
-                        "animals"]
-  --model-name {s,b,l,h}
-                        [s: ViT-S, b: ViT-B, l: ViT-L, h: ViT-H]
-  --yolo-size YOLO_SIZE
-                        YOLOv8 image size during inference
-  --conf-threshold CONF_THRESHOLD
-                        Minimum confidence for keypoints to be drawn. [0, 1] range
-  --rotate {0,90,180,270}
-                        Rotate the image of [90, 180, 270] degress counterclockwise
-  --yolo-step YOLO_STEP
-                        The tracker can be used to predict the bboxes instead of yolo for performance, this flag
-                        specifies how often yolo is applied (e.g. 1 applies yolo every frame). This does not have any
-                        effect when is_video is False
-  --single-pose         Do not use SORT tracker because single pose is expected in the video
-  --show                preview result during inference
-  --show-yolo           draw yolo results
-  --show-raw-yolo       draw yolo result before that SORT is applied for tracking (only valid during video inference)
-  --save-img            save image results
-  --save-json           save json results
-```
-
-You can run inference from code as follows:
-```python
-import cv2
-from easy_ViTPose import VitInference
-
-# Image to run inference RGB format
-img = cv2.imread('./examples/img1.jpg')
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-# set is_video=True to enable tracking in video inference
-# be sure to use VitInference.reset() function to reset the tracker after each video
-# There are a few flags that allows to customize VitInference, be sure to check the class definition
-model_path = './ckpts/vitpose-s-coco_25.pth'
-yolo_path = './yolov8s.pth'
-
-# If you want to use MPS (on new macbooks) use the torch checkpoints for both ViTPose and Yolo
-# If device is None will try to use cuda -> mps -> cpu (otherwise specify 'cpu', 'mps' or 'cuda')
-# dataset and det_class parameters can be inferred from the ckpt name, but you can specify them.
-model = VitInference(model_path, yolo_path, model_name='s', yolo_size=320, is_video=False, device=None)
-
-# Infer keypoints, output is a dict where keys are person ids and values are keypoints (np.ndarray (25, 3): (y, x, score))
-# If is_video=True the IDs will be consistent among the ordered video frames.
-keypoints = model.inference(img)
-
-# call model.reset() after each video
-
-img = model.draw(show_yolo=True)  # Returns RGB image with drawings
-cv2.imshow('image', cv2.cvtColor(img, cv2.COLOR_RGB2BGR)); cv2.waitKey(0)
-```
-> [!NOTE]
-> If the input file is a video [SORT](https://github.com/abewley/sort) is used to track people IDs and output consistent identifications.
-
-### OUTPUT json format
-The output format of the json files:
-
-```
-{
-    "keypoints":
-    [  # The list of frames, len(json['keypoints']) == len(video)
-        {  # For each frame a dict
-            "0": [  #  keys are id to track people and value the keypoints
-                [121.19, 458.15, 0.99], # Each keypoint is (y, x, score)
-                [110.02, 469.43, 0.98],
-                [110.86, 445.04, 0.99],
-            ],
-            "1": [
-                ...
-            ],
-        },
-        {
-            "0": [
-                [122.19, 458.15, 0.91],
-                [105.02, 469.43, 0.95],
-                [122.86, 445.04, 0.99],
-            ],
-            "1": [
-                ...
-            ]
-        }
-    ],
-    "skeleton":
-    {  # Skeleton reference, key the idx, value the name
-        "0": "nose",
-        "1": "left_eye",
-        "2": "right_eye",
-        "3": "left_ear",
-        "4": "right_ear",
-        "5": "neck",
-        ...
-    }
-}
-```
-
----
-
-## Web UI (Flask demo app)
-
-`webapp/` contains a small Flask app for uploading an image/video and viewing pose
-results in the browser (progress bar, raw keypoint table, downloadable JSON).
+### Roboflow API key (needed for Shuttlecock / Gabungan / Court / Golf modes)
+Those modes call Roboflow-hosted detection models over HTTP. Local-only modes (plain pose, TrackNetV3)
+don't need this.
 
 ```bash
-source .venv/bin/activate
+cp webapp/.env.example webapp/.env
+# edit webapp/.env and paste your Private API key (from app.roboflow.com/settings/api)
+# after ROBOFLOW_API_KEY=
+```
+
+## Web UI
+
+```bash
 python webapp/app.py
 # open http://127.0.0.1:5050
 ```
 
-### Shuttlecock detection (Roboflow workflow)
+### Upload page (`/`) — 6 modes
+| Mode | What it does | Runs locally / API |
+|---|---|---|
+| Manusia / Hewan | ViTPose body pose | local |
+| Shuttlecock | Shuttlecock detection | Roboflow |
+| Gabungan | Pose + shuttlecock combined | local + Roboflow |
+| Posisi Lapangan | Player + shuttlecock position on a court minimap (homography) | local + Roboflow |
+| TrackNetV3 | Shuttlecock trajectory across a whole video | local |
+| Golf | Body pose + club grip/head keypoints | local + Roboflow |
 
-Besides the local ViTPose modes ("Manusia" / "Hewan"), the web UI has a third mode
-that calls a Roboflow-hosted workflow ("Shuttlecock Detection") over HTTP instead of
-running a local model. It supports both images and video (video is processed by
-calling the workflow once per extracted frame — this is **not** real-time/webcam
-streaming; that would need Roboflow's separate WebRTC integration).
+Each result page shows the annotated image/video, a raw keypoint table, and downloadable JSON (video
+modes also get a per-frame PNG download, single frame or all frames as a ZIP).
 
-**Setup:**
+### GolfDB batch page (`/golfdb`)
+Expects `golfDB.csv` (the dataset's metadata/events CSV) at the project root and each swing's extracted
+event frames under `frames/frames/<0000-padded id>/` (10 frames per swing: GolfDB's `events` array —
+clip_start, address, toe-up, mid-backswing, top, mid-downswing, impact, mid-follow-through, finish,
+clip_end).
 
-1. Get a **Private API Key** from [app.roboflow.com/settings/api](https://app.roboflow.com/settings/api)
-   (not the Publishable key — that one's meant for client-side/browser code).
-2. Set it, either way works (never hardcode it in the source):
-   - **File** (easiest): `cp webapp/.env.example webapp/.env`, then open `webapp/.env`
-     and paste your key after `ROBOFLOW_API_KEY=`. It's gitignored, so it's never
-     committed.
-   - **Env var**: `export ROBOFLOW_API_KEY='rf_xxxxxxxxxxxx'` before starting the
-     server — this always takes priority over the `.env` file if both are set.
-3. Start the server (`python webapp/app.py`), then in the web UI pick "Shuttlecock /
-   Kok Badminton (Roboflow)" as the mode and upload an image or video.
+- **Process** one swing, a selected set, or "N next pending" / "all pending" — resumable, since it
+  always skips swings that already have output.
+- **Live per-frame progress**, not just per-swing.
+- **Per-swing detail page** (`/golfdb/<id>`) — one annotated image per event, a click-to-edit tool for
+  manually placing/correcting the club grip/head point when detection missed it (redraws the image and
+  updates the JSON/CSV immediately), "download all images as ZIP", and **reprocess** (wipes and redoes
+  that swing from scratch).
+- **Combined CSV exports** across every processed swing, generated on demand:
+  - *per-frame* — one row per swing×event (same columns as one swing's own CSV, just stacked).
+  - *wide* — one row per swing, every event's x/y features prefixed by event name
+    (`address_nose_x`, `impact_club_head_y`, ...) — clustering-ready, numeric only.
+  - *array* — one row per swing, each column holds all 10 events' values as an ordered list
+    (`nose_x: [520.56, 521.08, ...]`).
 
-**Files:**
-- `webapp/shuttlecock_client.py` — the API client (`run_shuttlecock_workflow`,
-  defensive output parsing, retries with backoff, timeout). Uses plain `requests`
-  rather than the official `inference-sdk` package — see the module docstring for why
-  (a real dependency conflict: `inference-sdk` pulls in `scipy>=2.0`-requiring
-  `supervision`, which breaks this project's torch/numpy<2 stack in the same venv).
-- `webapp/smoke_test_shuttlecock.py` — manual smoke test:
-  ```bash
-  export ROBOFLOW_API_KEY='rf_xxxxxxxxxxxx'
-  python webapp/smoke_test_shuttlecock.py path/to/photo.jpg
-  ```
+  All three merge in GolfDB's own `events`/`bbox` columns and auto-fill missing club grip/head points:
+  first by linear interpolation from the same swing's other detected events (grip only — the head
+  moves through too fast/curved an arc for a straight-line estimate to be reliable, confirmed by
+  rendering an example), then by falling back to the wrist keypoint. Every filled value is tagged in
+  its `*_source` column (`interpolated_same_swing`, `wrist_fill_export`, ...) so it stays
+  distinguishable from a real detection — manual correction via the detail page is the reliable fix
+  for anything that still looks wrong.
 
-> [!WARNING]
-> **Unverified output schema.** This integration was built without a live call to the
-> workflow (no Roboflow MCP session or API key was available while writing it). The
-> request/response *transport* (endpoint URL, JSON shape) is grounded against
-> `inference-sdk`'s own source, but this specific workflow's *output field names* were
-> never observed. `split_workflow_outputs()` classifies outputs by value shape
-> (image-looking base64 blob vs. list of detection dicts) instead of hardcoded key
-> names, so it should work regardless — but run `smoke_test_shuttlecock.py` with a
-> real API key and check its printed output against what you expect before relying on
-> this in the UI.
->
-> **Cost note:** video mode makes one Roboflow API call per frame — a 5s/25fps clip
-> is ~125 calls. Check [roboflow.com/pricing](https://roboflow.com/pricing) for your
-> plan's credits before processing long videos.
-
----
-
-## Finetuning
-
-> [!NOTE]
-> easy_ViTPose supports finetuning again! Many thanks to [@CatoTea](https://github.com/CatoTea) for adding it back 🚀
-
-This guide provides the general process to finetune ViTPose on your own custom dataset.
-### 1. Prepare Pre-trained Checkpoint
-
-- Download an official ViTPose checkpoint from the [official release](https://github.com/ViTAE-Transformer/ViTPose).
-- Convert the official checkpoint into a single-head model suitable for fine-tuning.
-  ```bash
-  python ./model_split.py --source SOURCE --prefix PREFIX --target TARGET
-  ```
-- Set the checkpoint path for resuming from the model in:
-
-  ```./easy_ViTPose/config.yaml```
-### 2. Prepare Dataset
-- Prepare your dataset in **COCO format** with the following directory structure:
-    ```
-    data/
-    ├── train/
-    │   ├── config/
-    │   │   └── config.json
-    │   └── images/
-    │       ├── file_name_0.jpg
-    │       ├── file_name_1.jpg
-    │       ├── file_name_2.jpg
-    │       └── ...
-    ├── val/...
-    └── test/...
-    ```
-    or modify ```./easy_ViTPose/datasets/COCO.py``` to fit your own structure if necessary.
-
-- Configure attributes in ```./easy_ViTPose/datasets/COCO.py``` according to your dataset:
-    - ```self.kpt_id```
-    - ```self.upper_body_ids```
-    - ```self.lower_body_ids```
-    - ```self.joints_weight```
-
-### 3. Configure and Start Training
-- Edit your training config at:
-  ```./easy_ViTPose/configs/train_configs/ViTPose_large_coco_256x192_custom.py```
-
-> [!NOTE]
-> This is a sample config file for ViTPose large; you can refer to other config files for customization.
-
-- Start training:
-  ```bash
-  python train.py --config-path config.yaml --model-name 'c' --freeze-backbone False
-  ```
-
-### 4. Inference on Custom Data
-- Edit number of keypoints in ```./easy_ViTPose/configs/ViTPose_custom.py```.
-- Modify the ```joints_dict()``` dictionary for visualization in ```./easy_ViTPose/vit_utils/visualization.py``` to fit your custom data.
-- Run the following example command with your YOLO detection class and dataset name:
-```bash
-python inference.py --input INPUT_PATH --model ./best.pth --yolo ./yolo11x.pt --dataset custom --model-name l --output-path OUTPUT_PATH --det-class cow --save-img --save-json --show-yolo  --conf-threshold 0.25 --yolo-size 640
+### Output layout
+```
+hasil/<id>/
+├── event-1/ ... event-10/     # annotated frame per GolfDB event (event-unmatched/ if unlabeled)
+├── golf_result.json           # body keypoints + club points + GolfDB row, per frame
+├── golf_result.csv            # same data, one row per frame, wide columns
+└── golf_result_long.csv       # tidy format, one row per (frame, keypoint)
 ```
 
+### Standalone CLI (what the batch page runs per swing)
+```bash
+python golf_inference.py --input frames/frames/0000 --golfdb golfDB.csv --golfdb-id 0
+# or on a full video:
+python golf_inference.py --input path/to/swing.mp4 --golfdb golfDB.csv --golfdb-id 0
+```
+`--output-path` defaults to `hasil/<input name>` if not given. `--no-club` skips Roboflow entirely
+(body pose only — useful without an API key, or to process fast).
 
 ---
 
----
+## Base library: ViTPose inference
 
-## Evaluation on COCO dataset
-1. Download COCO dataset images and labels
-    - 2017 Val images [5K/1GB]: http://images.cocodataset.org/zips/val2017.zip <br>
-        The extracted directory looks like this:
-        ```
-        val2017/              
-        ├── 000000000139.jpg
-        ├── 000000000285.jpg
-        ├── 000000000632.jpg
-        └── ...
-        ```  
-    - 2017 Train/Val annotations [241MB]: http://images.cocodataset.org/annotations/annotations_trainval2017.zip <br>
-        The extracted directory looks like this:
-        ```
-        annotations/              
-        ├── person_keypoints_val2017.json
-        ├── person_keypoints_train2017.json
-        └── ...
-        ```  
+### Skeleton reference
+Multiple skeletons across datasets (AIC / MPII / COCO / COCO+FEET / COCO WHOLEBODY / APT36k / AP10k) —
+see [`easy_ViTPose/vit_utils/visualization.py`](easy_ViTPose/vit_utils/visualization.py).
 
-2. Run the following command:
+### CLI
+```bash
+python inference.py --input img.jpg --model models/vitpose-l-coco.onnx --yolo models/yolov8l.pt \
+    --save-img --save-json
+```
+Run `python inference.py --help` for the full flag list (dataset, det-class, model-name, rotate,
+single-pose, yolo-step, etc).
 
-    ```bash
+### From code
+```python
+import cv2
+from easy_ViTPose import VitInference
 
-    $ python evaluation_on_coco.py
+img = cv2.cvtColor(cv2.imread('./examples/img1.jpg'), cv2.COLOR_BGR2RGB)
+model = VitInference('models/vitpose-l-coco.onnx', 'models/yolov8l.pt', is_video=False)
 
-    Command line arguments:
-        --model_path: Path to the pretrained ViT Pose model
-        
-        --yolo_path: Path to the YOLOv8 model
+keypoints = model.inference(img)  # {person_id: ndarray(N, 3) of (y, x, score)}
+img = model.draw(show_yolo=True)
+cv2.imshow('image', cv2.cvtColor(img, cv2.COLOR_RGB2BGR)); cv2.waitKey(0)
+```
 
-        --img_folder_path: Path to the directory containing COCO val images (/val2017 extracted in step 1). 
+### JSON output format
+```json
+{
+  "keypoints": [
+    { "0": [[121.19, 458.15, 0.99], "..."], "1": ["..."] }
+  ],
+  "skeleton": { "0": "nose", "1": "left_eye", "...": "..." }
+}
+```
 
-        --annFile: Path to json file for COCO keypoints for val set (annotations/person_keypoints_val2017.json extracted in step 1)
-    ```
+## Finetuning
+See the original project's guide for finetuning ViTPose on a custom dataset (checkpoint splitting via
+`model_split.py`, COCO-format dataset prep, `train.py`, custom skeleton in `visualization.py`).
 
----
-
+## Evaluation on COCO
+```bash
+python evaluation_on_coco.py --model_path ... --yolo_path ... --img_folder_path val2017/ \
+    --annFile annotations/person_keypoints_val2017.json
+```
 
 ## Docker
-The system may be built in a container using Docker. This is intended to demonstrate container-wise inference, adapt it to your own needs by changing models and skeletons:
-
-`docker build . -t easy_vitpose`
-
-The image is based on NVIDIA's PyTorch image, which is 20GB large. 
-If you have a compatible GPU set up with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), 
-ViTPose will run with hardware acceleration.
-
-To test an example, create a folder called `cats` with a picture of a cat as `image.jpg`. 
-Run `./models/download.sh` to fetch the large yolov8 and ap10k ViTPose models. Then run inference using the following command (replace with the correct `cats` and `models` paths):
-
-`docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -v ./models:/models -v ~/cats:/cats easy_vitpose python inference.py --det-class cat --input /cats/image.jpg --output-path /cats --save-img --model /models/vitpose-l-ap10k.onnx --yolo /models/yolov8l.pt`
-
-The result image may be viewed in your `cats` folder.
-
-## TODO:
-- refactor finetuning (currently not available)
-- benchmark and check bottlenecks of inference pipeline
-- parallel batched inference
-- other minor fixes
-- yolo version for animal pose, check https://github.com/JunkyByte/easy_ViTPose/pull/18
-- solve cuda exceptions on script exit when using tensorrt (no idea how)
-- add infos about inferred informations during inference, better output of inference status (device etc)
-- check if is possible to make colab work without runtime restart
-
-Feel free to open issues, pull requests and contribute on these TODOs.
+```bash
+docker build . -t easy_vitpose
+docker run --gpus all --rm -it --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+    -v ./models:/models -v ~/cats:/cats easy_vitpose \
+    python inference.py --det-class cat --input /cats/image.jpg --output-path /cats \
+    --save-img --model /models/vitpose-l-ap10k.onnx --yolo /models/yolov8l.pt
+```
 
 ## Reference
-Thanks to the VitPose authors and their official implementation [ViTAE-Transformer/ViTPose](https://github.com/ViTAE-Transformer/ViTPose).  
-The SORT code is taken from [abewley/sort](https://github.com/abewley/sort)
+Built on [ViTAE-Transformer/ViTPose](https://github.com/ViTAE-Transformer/ViTPose) via
+[JunkyByte/easy_ViTPose](https://github.com/JunkyByte/easy_ViTPose). Tracking: SORT
+([abewley/sort](https://github.com/abewley/sort)). Shuttlecock trajectory:
+[TrackNetV3](https://github.com/qaz812345/TrackNetV3). Golf swing dataset:
+[GolfDB](https://github.com/wmcnally/GolfDB).
