@@ -1,0 +1,30 @@
+**/*.pt
+**/*.pth
+**/*.onnx
+**/__pycache__
+**/coco/
+.DS_Store
+runs
+ckpts
+annotations
+examples
+outputs
+.ipynb_checkpoints
+easy_ViTPose.egg-info
+.env
+**/.env
+
+# large/generated data -- not source code, keeps the repo from bloating to GBs
+.venv/
+models/
+frames/
+hasil/
+webapp/static/uploads/
+webapp/static/results/
+Finding Shuttlecock.v1i.yolov8/
+sandra-dorset-01-noslow/
+sandra-dorset-01-noslow.zip
+easy_vitpose_colab_code.zip
+*.mp4
+*.mov
+*.avi

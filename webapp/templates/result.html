@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+{% block title %}Hasil &mdash; easy_ViTPose{% endblock %}
+
+{% macro pose_details(persons) %}
+<details class="raw">
+  <summary>Keypoint pose ViTPose <span class="hint">{{ persons|length }} objek</span></summary>
+  <div class="raw-body">
+    {% for person in persons %}
+    <div class="person-block">
+      <div class="person-header">Objek #{{ person.id }} &mdash; {{ person.points|length }} titik</div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Titik</th><th>Y</th><th>X</th><th>Confidence</th></tr></thead>
+          <tbody>
+          {% for p in person.points %}
+            <tr>
+              <td>{{ p.name }}</td>
+              <td>{{ p.y }}</td>
+              <td>{{ p.x }}</td>
+              <td>{{ p.score }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endmacro %}
+
+{% macro shuttlecock_details(detections) %}
+<details class="raw">
+  <summary>Deteksi shuttlecock <span class="hint">{{ detections|length }} deteksi</span></summary>
+  <div class="raw-body">
+    {% if detections %}
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Terdeteksi sebagai</th><th>Keyakinan</th><th>Posisi (piksel)</th><th>Ukuran</th></tr></thead>
+        <tbody>
+        {% for det in detections %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ det.class or 'Shuttlecock' }}</td>
+            <td>{{ '%.0f'|format((det.confidence or 0) * 100) }}%</td>
+            <td>x={{ '%.0f'|format(det.x or 0) }}, y={{ '%.0f'|format(det.y or 0) }}</td>
+            <td>{{ '%.0f'|format(det.width or 0) }} &times; {{ '%.0f'|format(det.height or 0) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="subtitle" style="margin:0;">Nggak ada shuttlecock yang terdeteksi.</p>
+    {% endif %}
+  </div>
+</details>
+{% endmacro %}
+
+{% block content %}
+<div class="card">
+  <span class="badge">{{ mode_label }}</span>
+  <span class="badge" style="margin-left:6px;">Selesai dalam {{ elapsed }} detik</span>
+
+  {% if result.kind == 'image' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_detected }}</b>objek terdeteksi</div>
+    </div>
+    <h3>Hasil skeleton</h3>
+    <img class="result" src="{{ url_for('static', filename='results/' + result.result_image) }}" alt="hasil skeleton">
+    {{ pose_details(result.persons) }}
+
+  {% elif result.kind == 'video' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_frames }}</b>frame diproses</div>
+      <div class="stat"><b>{{ result.max_persons }}</b>maks. objek per frame</div>
+    </div>
+    <h3>Hasil video skeleton</h3>
+    <video class="result" controls src="{{ url_for('static', filename='results/' + result.result_video) }}"></video>
+    {% if not result.transcoded %}
+    <p class="subtitle">Catatan: ffmpeg gagal transcode, video mungkin tidak preview di semua browser &mdash; tetap bisa didownload.</p>
+    {% endif %}
+    <p class="subtitle">Video punya banyak frame &mdash; koordinat keypoint lengkap ada di file JSON, download di bawah.</p>
+
+    <h3 style="margin-top:18px;">Download frame</h3>
+    <div class="actions" style="align-items:center; gap:8px;">
+      <input type="number" id="frameIdx" min="0" max="{{ result.num_frames - 1 }}" value="0"
+             style="width:90px; padding:8px; border-radius:8px; border:1px solid var(--border, #ccc);">
+      <span class="subtitle" style="margin:0;">/ {{ result.num_frames - 1 }}</span>
+      <a class="btn secondary" id="downloadFrameBtn"
+         href="{{ url_for('download_frame', job_id=result.job_id, idx=0) }}" download>Download frame ini</a>
+      <a class="btn secondary" href="{{ url_for('download_frames_zip', job_id=result.job_id) }}" download>Download semua frame (ZIP)</a>
+    </div>
+    <script>
+      (function () {
+        var input = document.getElementById('frameIdx');
+        var btn = document.getElementById('downloadFrameBtn');
+        var base = "{{ url_for('download_frame', job_id=result.job_id, idx=0) }}".replace(/0\.png$/, '');
+        input.addEventListener('input', function () {
+          var n = Math.max(0, Math.min({{ result.num_frames - 1 }}, parseInt(input.value || '0', 10)));
+          btn.href = base + n + '.png';
+        });
+      })();
+    </script>
+
+  {% elif result.kind == 'shuttlecock_image' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_detected }}</b>deteksi ditemukan</div>
+    </div>
+    <h3>Hasil deteksi shuttlecock</h3>
+    {% if result.result_image %}
+      <img class="result" src="{{ url_for('static', filename='results/' + result.result_image) }}" alt="hasil deteksi shuttlecock">
+    {% else %}
+      <p class="subtitle">Workflow ini nggak mengembalikan gambar hasil anotasi &mdash; cek JSON di bawah buat data deteksinya.</p>
+    {% endif %}
+    <details class="raw" open>
+      <summary>Detail deteksi <span class="hint">{{ (result.detections_flat or [])|length }} deteksi</span></summary>
+      <div class="raw-body">
+        {% if result.detections_flat %}
+        <div class="scroll">
+          <table>
+            <thead><tr><th>#</th><th>Terdeteksi sebagai</th><th>Keyakinan</th><th>Posisi (tengah)</th><th>Ukuran</th></tr></thead>
+            <tbody>
+            {% for det in result.detections_flat %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ det.class or 'Shuttlecock' }}</td>
+                <td>{{ '%.0f'|format((det.confidence or 0) * 100) }}%</td>
+                <td>x={{ '%.0f'|format(det.x or 0) }}, y={{ '%.0f'|format(det.y or 0) }} px</td>
+                <td>{{ '%.0f'|format(det.width or 0) }} &times; {{ '%.0f'|format(det.height or 0) }} px</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="subtitle" style="margin:0;">Nggak ada shuttlecock yang terdeteksi di gambar ini.</p>
+        {% endif %}
+      </div>
+    </details>
+
+  {% elif result.kind == 'combined_image' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_detected }}</b>orang terdeteksi</div>
+      <div class="stat"><b>{{ result.shuttlecock_count }}</b>shuttlecock terdeteksi</div>
+    </div>
+    <h3>Hasil gambar (skeleton + shuttlecock)</h3>
+    <img class="result" src="{{ url_for('static', filename='results/' + result.result_image) }}" alt="hasil gabungan pose + shuttlecock">
+    {% if result.shuttlecock_error %}
+      <p class="subtitle" style="color:var(--err);">Deteksi shuttlecock gagal: {{ result.shuttlecock_error }} (skeleton tetap tampil).</p>
+    {% endif %}
+    {{ pose_details(result.persons) }}
+    {{ shuttlecock_details(result.shuttlecock_detections) }}
+
+  {% elif result.kind == 'combined_video' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_frames }}</b>frame diproses</div>
+      <div class="stat"><b>{{ result.max_persons }}</b>maks. orang per frame</div>
+      <div class="stat"><b>{{ result.max_shuttlecocks }}</b>maks. shuttlecock per frame</div>
+    </div>
+    <h3>Hasil video (skeleton + shuttlecock)</h3>
+    <video class="result" controls src="{{ url_for('static', filename='results/' + result.result_video) }}"></video>
+    {% if result.last_error %}
+      <p class="subtitle" style="color:var(--err);">Ada frame yang gagal dipanggil ke Roboflow: {{ result.last_error }}</p>
+    {% endif %}
+    {% if not result.transcoded %}
+    <p class="subtitle">Catatan: ffmpeg gagal transcode, video mungkin tidak preview di semua browser.</p>
+    {% endif %}
+    <p class="subtitle">Video punya banyak frame &mdash; data keypoint + deteksi shuttlecock lengkap ada di file JSON, download di bawah.</p>
+
+  {% elif result.kind == 'court_image' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_detected }}</b>orang terdeteksi</div>
+      <div class="stat"><b>{{ result.shuttlecock_count }}</b>shuttlecock terdeteksi</div>
+      {% if result.court_manual %}
+      <div class="stat"><b>Manual</b>kalibrasi lapangan</div>
+      {% elif result.court_confidence %}
+      <div class="stat"><b>{{ '%.0f'|format(result.court_confidence * 100) }}%</b>keyakinan deteksi lapangan</div>
+      {% endif %}
+    </div>
+
+    <div class="media-grid{{ ' with-map' if result.minimap_image else '' }}">
+      <div>
+        <h3>Hasil gambar</h3>
+        <img class="result" src="{{ url_for('static', filename='results/' + result.result_image) }}" alt="hasil pose + shuttlecock">
+        {% if result.shuttlecock_error %}
+          <p class="subtitle" style="color:var(--err);">Deteksi shuttlecock gagal: {{ result.shuttlecock_error }}</p>
+        {% endif %}
+      </div>
+      {% if result.minimap_image %}
+      <div>
+        <h3>Posisi di lapangan</h3>
+        <img class="result" src="{{ url_for('static', filename='results/' + result.minimap_image) }}" alt="posisi di lapangan">
+      </div>
+      {% endif %}
+    </div>
+    {% if not result.minimap_image and result.court_error %}
+      <p class="subtitle" style="color:var(--err);">Deteksi lapangan gagal: {{ result.court_error }}</p>
+    {% endif %}
+
+    <h3>Posisi pemain &amp; shuttlecock (meter)</h3>
+    {% if result.player_positions %}
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Objek</th><th>Posisi X (lebar)</th><th>Posisi Y (panjang)</th></tr></thead>
+        <tbody>
+        {% for p in result.player_positions %}
+          <tr{% if not p.reliable %} style="color:var(--err);"{% endif %}>
+            <td>Pemain #{{ p.id }}</td>
+            <td>{{ p.x_m }} m</td>
+            <td>{{ p.y_m }} m{% if not p.reliable %} &mdash; di luar jangkauan kalibrasi{% endif %}</td>
+          </tr>
+        {% endfor %}
+        {% if result.shuttlecock_position %}
+          <tr{% if not result.shuttlecock_position.reliable %} style="color:var(--err);"{% endif %}>
+            <td>Shuttlecock</td>
+            <td>{{ result.shuttlecock_position.x_m }} m</td>
+            <td>{{ result.shuttlecock_position.y_m }} m{% if not result.shuttlecock_position.reliable %} &mdash; di luar jangkauan kalibrasi{% endif %}</td>
+          </tr>
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <p class="subtitle">Lapangan: lebar 0&ndash;6.1m (garis ganda), panjang 0&ndash;13.4m (baseline ke baseline), net di Y=6.7m. Posisi pemain dari titik kaki (rata-rata pergelangan kaki kiri &amp; kanan).</p>
+    {% else %}
+    <p class="subtitle">Belum ada posisi yang bisa dihitung (lapangan/pemain tidak terdeteksi jelas di gambar ini).</p>
+    {% endif %}
+
+    {{ pose_details(result.persons) }}
+    {{ shuttlecock_details(result.shuttlecock_detections) }}
+    {% if result.court_keypoints %}
+    <details class="raw">
+      <summary>Titik lapangan mentah <span class="hint">deteksi otomatis, {{ result.court_keypoints|length }} titik</span></summary>
+      <div class="raw-body">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Titik</th><th>Posisi (piksel)</th><th>Keyakinan</th></tr></thead>
+            <tbody>
+            {% for kp in result.court_keypoints %}
+              <tr{% if kp.confidence < 0.5 %} style="color:var(--err);"{% endif %}>
+                <td>{{ kp.class }}</td>
+                <td>x={{ '%.0f'|format(kp.x) }}, y={{ '%.0f'|format(kp.y) }}</td>
+                <td>{{ '%.0f'|format(kp.confidence * 100) }}%</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="subtitle">Baris merah = confidence &lt; 50%, biasanya nggak dipakai buat hitung homography.</p>
+      </div>
+    </details>
+    {% endif %}
+
+  {% elif result.kind == 'court_video' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_frames }}</b>/{{ result.total_frames }} frame diproses</div>
+      <div class="stat"><b>{{ result.max_persons }}</b>maks. orang per frame</div>
+      <div class="stat"><b>{{ result.max_shuttlecocks }}</b>maks. shuttlecock per frame</div>
+      {% if result.court_manual %}
+      <div class="stat"><b>Manual</b>kalibrasi lapangan</div>
+      {% elif result.court_confidence %}
+      <div class="stat"><b>{{ '%.0f'|format(result.court_confidence * 100) }}%</b>keyakinan lapangan (frame 1)</div>
+      {% endif %}
+    </div>
+
+    <div class="media-grid{{ ' with-map' if result.minimap_video else '' }}">
+      <div>
+        <h3>Hasil video</h3>
+        <video class="result" controls src="{{ url_for('static', filename='results/' + result.result_video) }}"></video>
+        {% if result.last_shuttlecock_error %}
+          <p class="subtitle" style="color:var(--err);">Ada frame yang gagal dipanggil ke Roboflow (shuttlecock): {{ result.last_shuttlecock_error }}</p>
+        {% endif %}
+        {% if not result.transcoded %}
+        <p class="subtitle">Catatan: ffmpeg gagal transcode, video mungkin tidak preview di semua browser.</p>
+        {% endif %}
+      </div>
+      {% if result.minimap_video %}
+      <div>
+        <h3>Posisi di lapangan</h3>
+        <video class="result" controls src="{{ url_for('static', filename='results/' + result.minimap_video) }}"></video>
+      </div>
+      {% endif %}
+    </div>
+    {% if not result.minimap_video and result.court_error %}
+      <p class="subtitle" style="color:var(--err);">Deteksi lapangan gagal: {{ result.court_error }} (posisi nggak bisa dihitung buat video ini).</p>
+    {% endif %}
+    <p class="subtitle">Lapangan cuma dikalibrasi sekali (frame pertama / klik manual), lalu dipakai buat semua frame &mdash; kalau kamera bergerak/zoom, posisi bisa makin meleset di frame berikutnya.</p>
+    <p class="subtitle">Data lengkap tiap frame (keypoint pose, deteksi shuttlecock, posisi lapangan) ada di file JSON &mdash; array <code>frames[]</code>, satu entri per frame.</p>
+
+  {% elif result.kind == 'tracknet_video' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_frames }}</b>frame diproses</div>
+      <div class="stat"><b>{{ result.visible_count }}</b>frame kok terdeteksi</div>
+      <div class="stat"><b>{{ result.visible_pct }}%</b>visibility rate</div>
+    </div>
+    <h3>Hasil video (trajektori kok)</h3>
+    {% if result.result_video %}
+      <video class="result" controls src="{{ url_for('static', filename='results/' + result.result_video) }}"></video>
+    {% else %}
+      <p class="subtitle">Video hasil anotasi nggak ke-generate, tapi data trajektori tetap ada di bawah.</p>
+    {% endif %}
+    <p class="subtitle">Jalan sepenuhnya lokal (TrackNetV3, nggak butuh API/internet) &mdash; posisi kok diprediksi pakai info gerakan antar-frame (background estimation + heatmap), lalu dirapikan (trajectory rectification) buat ngisi frame yang kok-nya sempat nggak kedeteksi.</p>
+
+    <details class="raw">
+      <summary>Trajektori kok per frame <span class="hint">{{ result.trajectory|length }} frame</span></summary>
+      <div class="raw-body">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Frame</th><th>Terdeteksi</th><th>X</th><th>Y</th></tr></thead>
+            <tbody>
+            {% for t in result.trajectory %}
+              <tr{% if not t.visible %} style="color:var(--muted);"{% endif %}>
+                <td>{{ t.frame }}</td>
+                <td>{{ 'Ya' if t.visible else 'Tidak' }}</td>
+                <td>{{ t.x if t.visible else '-' }}</td>
+                <td>{{ t.y if t.visible else '-' }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+  {% elif result.kind == 'golf_image' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_detected }}</b>orang terdeteksi</div>
+      <div class="stat"><b>{{ '%.0f'|format((result.club_box_confidence or 0) * 100) }}%</b>keyakinan deteksi club</div>
+    </div>
+    <h3>Hasil gambar (skeleton + club: grip &amp; head)</h3>
+    <img class="result" src="{{ url_for('static', filename='results/' + result.result_image) }}" alt="hasil pose + club golf">
+    {% if result.club_error %}
+      <p class="subtitle" style="color:var(--err);">Deteksi club gagal: {{ result.club_error }} (skeleton tubuh tetap tampil).</p>
+    {% elif not (result.club and result.club.grip and result.club.head) %}
+      <p class="subtitle">Grip/head club nggak terdeteksi jelas di gambar ini (club mungkin ketutup badan).</p>
+    {% endif %}
+    {{ pose_details(result.persons) }}
+    <details class="raw">
+      <summary>Titik club (grip &amp; head) <span class="hint">model publik Roboflow</span></summary>
+      <div class="raw-body">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Titik</th><th>X</th><th>Y</th><th>Confidence</th></tr></thead>
+            <tbody>
+            {% for label, p in [('grip', result.club.grip), ('head', result.club.head)] %}
+              <tr{% if not p %} style="color:var(--muted);"{% endif %}>
+                <td>{{ label }}</td>
+                <td>{{ '%.0f'|format(p.x) if p else '-' }}</td>
+                <td>{{ '%.0f'|format(p.y) if p else '-' }}</td>
+                <td>{{ (('%.0f'|format(p.confidence * 100)) ~ '%') if p else 'tidak terdeteksi' }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+  {% elif result.kind == 'golf_video' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_frames }}</b>frame diproses</div>
+      <div class="stat"><b>{{ result.max_persons }}</b>maks. orang per frame</div>
+      <div class="stat"><b>{{ result.n_club_detected }}</b>/{{ result.num_frames }} frame grip+head terdeteksi</div>
+    </div>
+    <h3>Hasil video (skeleton + club: grip &amp; head)</h3>
+    <video class="result" controls src="{{ url_for('static', filename='results/' + result.result_video) }}"></video>
+    {% if result.last_error %}
+      <p class="subtitle" style="color:var(--err);">Ada frame yang gagal dipanggil ke Roboflow (club): {{ result.last_error }}</p>
+    {% endif %}
+    {% if not result.transcoded %}
+    <p class="subtitle">Catatan: ffmpeg gagal transcode, video mungkin tidak preview di semua browser.</p>
+    {% endif %}
+    <p class="subtitle">Data lengkap tiap frame (keypoint pose + grip/head club) ada di file JSON &mdash; array <code>keypoints[]</code> dan <code>club[]</code>, satu entri per frame.</p>
+
+  {% elif result.kind == 'shuttlecock_video' %}
+    <div class="stats">
+      <div class="stat"><b>{{ result.num_frames }}</b>/{{ result.total_frames }} frame diproses</div>
+    </div>
+    <h3>Hasil video deteksi shuttlecock</h3>
+    <video class="result" controls src="{{ url_for('static', filename='results/' + result.result_video) }}"></video>
+    {% if not result.any_image_output %}
+      <p class="subtitle">Workflow ini nggak mengembalikan gambar hasil anotasi per frame, jadi video di atas cuma video asli &mdash; data deteksi mentahnya tetap ada di JSON.</p>
+    {% endif %}
+    {% if result.last_error %}
+      <p class="subtitle" style="color:var(--err);">Ada frame yang gagal dipanggil ke Roboflow: {{ result.last_error }}</p>
+    {% endif %}
+    {% if not result.transcoded %}
+    <p class="subtitle">Catatan: ffmpeg gagal transcode, video mungkin tidak preview di semua browser.</p>
+    {% endif %}
+    <p class="subtitle">Data deteksi per frame ada di file JSON, download di bawah.</p>
+  {% endif %}
+
+  <div class="actions">
+    <a class="btn secondary" href="{{ url_for('static', filename='results/' + result.json_file) }}" download>Download JSON</a>
+    <a class="btn secondary" href="{{ url_for('index') }}">Proses file lain</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+{% block title %}GolfDB &mdash; easy_ViTPose{% endblock %}
+{% block content %}
+<style>
+  .wrap { max-width: 1180px; }
+  .golfdb-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 16px; }
+  .golfdb-toolbar .field { margin-bottom: 0; min-width: 120px; }
+  .golfdb-toolbar .field.grow { flex: 1 1 220px; }
+  .golfdb-toolbar input[type=text], .golfdb-toolbar input[type=number], .golfdb-toolbar select {
+    width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #fafbfc; color: var(--text); font-size: 0.85rem; font-family: inherit;
+  }
+  .checkline { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text); font-weight: 500; }
+  .checkline input { margin: 0; }
+  #golfdbTable-wrap { overflow-x: auto; }
+  #golfdbTable { font-size: 0.8rem; }
+  #golfdbTable th { cursor: pointer; user-select: none; white-space: nowrap; }
+  #golfdbTable th:hover { color: var(--text); }
+  #golfdbTable th.sorted::after { content: ' ' attr(data-dir); }
+  #golfdbTable td { white-space: nowrap; }
+  #golfdbTable td.player { white-space: normal; max-width: 220px; }
+  .badge.done { background: rgba(18,128,92,0.1); color: var(--ok); }
+  .badge.pending { background: rgba(41,85,214,0.08); color: var(--accent); }
+  .badge.nodata { background: rgba(102,112,133,0.12); color: var(--muted); }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 14px; font-size: 0.82rem; color: var(--muted); }
+  .pager button { padding: 6px 12px; }
+  #progressPanel { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; }
+  #progressPanel .errlist { max-height: 120px; overflow-y: auto; font-size: 0.78rem; color: var(--err); margin-top: 8px; }
+  #progressPanel.idle .progress-inner { background: var(--border); }
+  #progressPanel.idle .progress-label { color: var(--muted); }
+</style>
+
+<div class="card">
+  <span class="badge">GolfDB batch</span>
+  <span class="badge" style="margin-left:6px;">{{ n_done }}/{{ n_total }} selesai</span>
+  <span class="badge" style="margin-left:6px;">{{ n_ready }} siap diproses</span>
+  {% if not api_key_configured %}
+  <p class="subtitle" style="margin-top:12px; color:var(--err);">
+    ROBOFLOW_API_KEY belum di-set &mdash; deteksi club (grip/head) akan gagal kecuali centang "lewati deteksi club" di bawah.
+  </p>
+  {% endif %}
+
+  <h3>Proses batch</h3>
+  <div class="golfdb-toolbar">
+    <div class="field">
+      <label>Jumlah berikutnya</label>
+      <input type="number" id="batchLimit" min="1" value="20">
+    </div>
+    <div class="field">
+      <button class="btn" id="btnProcessNext" type="button">Proses N berikutnya yang belum</button>
+    </div>
+    <div class="field">
+      <button class="btn secondary" id="btnProcessAll" type="button">Proses SEMUA sisanya</button>
+    </div>
+    <div class="field">
+      <button class="btn secondary" id="btnProcessSelected" type="button">Proses yang dicentang (<span id="selCount">0</span>)</button>
+    </div>
+    <div class="field">
+      <button class="btn secondary" id="btnStop" type="button" style="display:none; border-color:var(--err); color:var(--err);">Hentikan</button>
+    </div>
+  </div>
+  <label class="checkline"><input type="checkbox" id="noClub"> Lewati deteksi club (lebih cepat, cuma body pose ViTPose)</label>
+  <p class="subtitle" style="margin-top:10px; margin-bottom:0;">
+    Aman diulang kapan saja: id yang sudah "Selesai" otomatis dilewati, jadi proses batch bisa dihentikan lalu dilanjut lagi tanpa mengulang dari awal.
+  </p>
+
+  <div id="progressPanel" class="idle">
+    <b id="progressHeadline">Belum ada proses berjalan.</b>
+    <div class="progress-outer"><div class="progress-inner" id="progressBar" style="width:0%;"></div></div>
+    <p class="progress-label" id="progressLabel">Menunggu proses dimulai...</p>
+    <div id="progressErrors" class="errlist" style="display:none;"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:18px;">
+  <h3>Data GolfDB ({{ n_total }} baris)</h3>
+  <p class="subtitle" style="margin-top:-4px;">
+    <a href="{{ url_for('golfdb_long_csv') }}" download>Download CSV gabungan (per-frame, kolom sedikit)</a>
+    &mdash; semua swing "Selesai" ditumpuk jadi satu file, 1 baris per event/frame (kolomnya sama seperti golf_result.csv satu swing, cuma minus score/confidence).
+    <br>
+    <a href="{{ url_for('golfdb_wide_csv') }}" download>Download CSV gabungan (wide format, 1 baris per swing)</a>
+    &mdash; tiap event (address, impact, dst) jadi awalan nama kolom, jadi kolomnya banyak tapi 1 baris = 1 swing utuh.
+    <br>
+    <a href="{{ url_for('golfdb_array_csv') }}" download>Download CSV gabungan (1 baris per swing, tiap kolom jadi list 10 nilai)</a>
+    &mdash; 1 baris per swing, nama kolom tetap sama (nose_x, dst), tapi isinya list nilai per event berurutan, mis. nose_x = [520.56, 521.08, ...].
+  </p>
+  <div class="golfdb-toolbar">
+    <div class="field grow">
+      <label>Cari (player / id)</label>
+      <input type="text" id="searchBox" placeholder="mis. Sandra, driver, 0042...">
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <select id="statusFilter">
+        <option value="all">Semua</option>
+        <option value="done">Selesai</option>
+        <option value="pending">Belum diproses</option>
+        <option value="nodata">Tanpa frame lokal</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="golfdbTable-wrap">
+    <table id="golfdbTable">
+      <thead>
+        <tr>
+          <th style="width:26px;"><input type="checkbox" id="selectAllBox"></th>
+          <th data-key="id">ID</th>
+          <th data-key="player">Player</th>
+          <th data-key="club">Club</th>
+          <th data-key="view">View</th>
+          <th data-key="split">Split</th>
+          <th data-key="status_label">Status</th>
+          <th data-key="head_ok">Head OK</th>
+          <th>Aksi</th>
+        </tr>
+      </thead>
+      <tbody id="golfdbTbody"></tbody>
+    </table>
+  </div>
+  <div class="pager">
+    <button class="btn secondary" id="prevPage" type="button">&larr; Sebelumnya</button>
+    <span id="pagerLabel"></span>
+    <button class="btn secondary" id="nextPage" type="button">Berikutnya &rarr;</button>
+  </div>
+</div>
+
+<script type="application/json" id="rowsData">{{ rows | tojson }}</script>
+<script>
+(function () {
+  const RAW = JSON.parse(document.getElementById('rowsData').textContent);
+  const ROWS = RAW.map(r => {
+    let status_label = r.done ? 'Selesai' : (r.has_frames ? 'Belum diproses' : 'Tanpa frame lokal');
+    return { ...r, status_label, head_ok: r.head_ok == null ? -1 : r.head_ok };
+  });
+  const selected = new Set();
+  const PAGE_SIZE = 100;
+  let page = 0;
+  let sortKey = 'id';
+  let sortDir = 1;
+
+  const tbody = document.getElementById('golfdbTbody');
+  const pagerLabel = document.getElementById('pagerLabel');
+  const selCount = document.getElementById('selCount');
+
+  function statusBadge(r) {
+    if (r.done) return `<span class="badge done">Selesai</span>`;
+    if (r.has_frames) return `<span class="badge pending">Belum</span>`;
+    return `<span class="badge nodata">Tanpa frame</span>`;
+  }
+
+  function matchesFilter(r) {
+    const q = document.getElementById('searchBox').value.trim().toLowerCase();
+    const st = document.getElementById('statusFilter').value;
+    if (st === 'done' && !r.done) return false;
+    if (st === 'pending' && !(r.has_frames && !r.done)) return false;
+    if (st === 'nodata' && r.has_frames) return false;
+    if (q && !(String(r.id).includes(q) || (r.player || '').toLowerCase().includes(q) || (r.club || '').toLowerCase().includes(q))) return false;
+    return true;
+  }
+
+  function getFiltered() {
+    const f = ROWS.filter(matchesFilter);
+    f.sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      // id/split/slow/head_ok are numeric but stored as strings (straight from the
+      // CSV) -- compare them as numbers, not text, or "10" sorts before "2".
+      const an = Number(av), bn = Number(bv);
+      if (av !== '' && bv !== '' && !Number.isNaN(an) && !Number.isNaN(bn)) {
+        av = an; bv = bn;
+      } else {
+        if (typeof av === 'string') av = av.toLowerCase();
+        if (typeof bv === 'string') bv = bv.toLowerCase();
+      }
+      if (av < bv) return -1 * sortDir;
+      if (av > bv) return 1 * sortDir;
+      return 0;
+    });
+    return f;
+  }
+
+  function render() {
+    const filtered = getFiltered();
+    const maxPage = Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1);
+    page = Math.min(page, maxPage);
+    const slice = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+    tbody.innerHTML = slice.map(r => {
+      const checked = selected.has(r.id) ? 'checked' : '';
+      const headCell = r.head_ok >= 0 ? `${r.head_ok}/${r.total_frames}` : '&mdash;';
+      let action;
+      if (r.done) {
+        action = `<a href="/golfdb/${r.id}">Lihat hasil</a>
+          <button class="btn secondary" style="padding:5px 12px; font-size:0.78rem; margin-left:6px;" onclick="golfdbReprocessOne('${r.id}')">Proses ulang</button>`;
+      } else if (r.has_frames) {
+        action = `<button class="btn secondary" style="padding:5px 12px; font-size:0.78rem;" onclick="golfdbProcessOne('${r.id}')">Proses</button>`;
+      } else {
+        action = `<span class="subtitle" style="margin:0;">-</span>`;
+      }
+      return `<tr>
+        <td><input type="checkbox" class="rowbox" data-id="${r.id}" ${checked}></td>
+        <td>${r.id}</td>
+        <td class="player">${r.player || ''}</td>
+        <td>${r.club || ''}</td>
+        <td>${r.view || ''}</td>
+        <td>${r.split || ''}</td>
+        <td>${statusBadge(r)}</td>
+        <td>${headCell}</td>
+        <td>${action}</td>
+      </tr>`;
+    }).join('');
+
+    pagerLabel.textContent = filtered.length
+      ? `Halaman ${page + 1}/${maxPage + 1} (${filtered.length} baris cocok)`
+      : 'Tidak ada baris yang cocok';
+
+    tbody.querySelectorAll('.rowbox').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) selected.add(cb.dataset.id); else selected.delete(cb.dataset.id);
+        selCount.textContent = selected.size;
+      });
+    });
+
+    document.querySelectorAll('#golfdbTable th[data-key]').forEach(th => {
+      th.classList.toggle('sorted', th.dataset.key === sortKey);
+      th.dataset.dir = sortDir === 1 ? '▲' : '▼';
+    });
+  }
+
+  document.querySelectorAll('#golfdbTable th[data-key]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.key;
+      if (sortKey === key) sortDir *= -1; else { sortKey = key; sortDir = 1; }
+      render();
+    });
+  });
+
+  document.getElementById('searchBox').addEventListener('input', () => { page = 0; render(); });
+  document.getElementById('statusFilter').addEventListener('change', () => { page = 0; render(); });
+  document.getElementById('prevPage').addEventListener('click', () => { page = Math.max(0, page - 1); render(); });
+  document.getElementById('nextPage').addEventListener('click', () => { page += 1; render(); });
+  document.getElementById('selectAllBox').addEventListener('change', (e) => {
+    getFiltered().forEach(r => { if (e.target.checked) selected.add(r.id); else selected.delete(r.id); });
+    selCount.textContent = selected.size;
+    render();
+  });
+
+  render();
+
+  // ---- batch processing ----
+  function noClub() { return document.getElementById('noClub').checked; }
+
+  function startBatch(body) {
+    fetch('/golfdb/process', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(r => r.json()).then(data => {
+      if (data.error) { alert(data.error); return; }
+      pollProgress();
+    }).catch(() => alert('Gagal memulai proses.'));
+  }
+
+  document.getElementById('btnProcessNext').addEventListener('click', () => {
+    const limit = parseInt(document.getElementById('batchLimit').value || '20', 10);
+    startBatch({ mode: 'pending', limit, no_club: noClub() });
+  });
+  document.getElementById('btnProcessAll').addEventListener('click', () => {
+    if (!confirm('Proses SEMUA id yang belum selesai? Ini bisa makan waktu berjam-jam untuk ribuan frame. Bisa dihentikan kapan saja lewat tombol Hentikan.')) return;
+    startBatch({ mode: 'pending', no_club: noClub() });
+  });
+  document.getElementById('btnProcessSelected').addEventListener('click', () => {
+    if (!selected.size) { alert('Belum ada baris yang dicentang.'); return; }
+    startBatch({ mode: 'selected', ids: Array.from(selected), no_club: noClub() });
+  });
+  document.getElementById('btnStop').addEventListener('click', () => {
+    fetch('/golfdb/stop', { method: 'POST' });
+  });
+
+  window.golfdbProcessOne = function (id) {
+    startBatch({ mode: 'selected', ids: [id], no_club: noClub() });
+  };
+
+  window.golfdbReprocessOne = function (id) {
+    if (!confirm(`Proses ulang id ${id}? Ini menjalankan deteksi dari awal dan menimpa hasil lama -- termasuk titik grip/head yang pernah kamu edit manual di halaman detailnya.`)) return;
+    startBatch({ mode: 'selected', ids: [id], no_club: noClub() });
+  };
+
+  let pollTimer = null;
+  let wasRunning = false;
+  function pollProgress() {
+    fetch('/golfdb/job_status').then(r => r.json()).then(st => {
+      const panel = document.getElementById('progressPanel');
+      const stopBtn = document.getElementById('btnStop');
+      const neverRan = !st.running && !st.current_id && st.done_count === 0 && !st.finished_at;
+
+      panel.classList.toggle('idle', neverRan);
+      stopBtn.style.display = st.running ? 'inline-flex' : 'none';
+
+      if (neverRan) {
+        document.getElementById('progressHeadline').textContent = 'Belum ada proses berjalan.';
+        document.getElementById('progressBar').style.width = '0%';
+        document.getElementById('progressLabel').textContent = 'Menunggu proses dimulai...';
+        document.getElementById('progressErrors').style.display = 'none';
+      } else {
+        // Frame-level progress (across the whole batch), not just id-level --
+        // 10 frames per swing, so id-level alone barely moves for a while.
+        const framesPct = st.frames_total ? Math.round(100 * st.frames_done / st.frames_total) : 0;
+        document.getElementById('progressBar').style.width = framesPct + '%';
+        const eta = (st.avg_seconds_per_frame && st.frames_total)
+          ? Math.max(0, Math.round(st.avg_seconds_per_frame * (st.frames_total - st.frames_done) / 60)) + ' menit lagi'
+          : '';
+        document.getElementById('progressLabel').textContent =
+          `${st.frames_done}/${st.frames_total} frame (${framesPct}%) -- id ${st.done_count}/${st.total} -- ok:${st.ok_count} error:${st.error_count}`
+          + (eta ? ` -- perkiraan ${eta}` : '');
+        document.getElementById('progressHeadline').textContent = st.running
+          ? `Memproses id ${st.current_id}${st.current_player ? ' (' + st.current_player + ')' : ''} `
+            + `-- frame ${st.current_frame + 1}/${st.current_frame_total}`
+            + (st.current_frame_name ? ` (${st.current_frame_name})` : '') + '...'
+          : 'Selesai (terakhir).';
+
+        const errBox = document.getElementById('progressErrors');
+        if (st.errors && st.errors.length) {
+          errBox.style.display = 'block';
+          errBox.innerHTML = st.errors.slice(-10).map(e => `id ${e.id}: ${e.error}`).join('<br>');
+        } else {
+          errBox.style.display = 'none';
+        }
+      }
+
+      // Reload once, only on the running -> finished transition (so the table's
+      // status/head-ok columns refresh) -- not on every idle poll afterwards,
+      // otherwise the page would reload forever once any job had ever finished.
+      if (wasRunning && !st.running) {
+        clearTimeout(pollTimer);
+        setTimeout(() => { location.reload(); }, 1200);
+        return;
+      }
+      wasRunning = st.running;
+      pollTimer = setTimeout(pollProgress, st.running ? 1500 : 5000);
+    }).catch(() => { pollTimer = setTimeout(pollProgress, 3000); });
+  }
+  pollProgress();
+})();
+</script>
+{% endblock %}

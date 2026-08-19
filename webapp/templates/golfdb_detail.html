@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}GolfDB #{{ row.id }} &mdash; easy_ViTPose{% endblock %}
+{% block content %}
+<style>
+  .wrap { max-width: 1180px; }
+  .frame-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .frame-img-wrap { position: relative; background: #000; line-height: 0; }
+  .frame-img-wrap img { width: 100%; display: block; }
+  .frame-img-wrap.armed img { cursor: crosshair; }
+  .frame-meta { padding: 8px 10px; }
+  .frame-meta b { font-size: 0.82rem; }
+  .point-controls { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .point-btn {
+    font-size: 0.72rem; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: #fafbfc; cursor: pointer; color: var(--text);
+  }
+  .point-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .point-btn.grip { }
+  .point-btn.head { }
+  .point-status { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+  .point-status .ok { color: var(--ok); font-weight: 600; }
+  .point-status .missing { color: var(--err); font-weight: 600; }
+  .hint-armed { font-size: 0.7rem; color: var(--accent); margin-top: 4px; }
+  #reprocessPanel { display: none; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; }
+  #reprocessPanel.show { display: block; }
+</style>
+
+<div class="card">
+  <p><a href="{{ url_for('golfdb_page') }}">&larr; Kembali ke daftar GolfDB</a></p>
+  <span class="badge">id {{ row.id }}</span>
+  <span class="badge" style="margin-left:6px;">{{ row.player }}</span>
+  <span class="badge" style="margin-left:6px;">{{ row.club }}</span>
+  <span class="badge" style="margin-left:6px;">{{ row.view }}</span>
+  <button type="button" class="btn secondary" id="btnReprocess" style="margin-left:6px;">Proses ulang id ini</button>
+
+  <div id="reprocessPanel">
+    <b id="reprocessHeadline">-</b>
+    <div class="progress-outer"><div class="progress-inner" id="reprocessBar" style="width:0%;"></div></div>
+    <p class="progress-label" id="reprocessLabel">0%</p>
+  </div>
+
+  <p class="subtitle" style="margin-top:14px; margin-bottom:0;">
+    Klik "Edit Grip" / "Edit Head" lalu klik titik yang benar di gambar (termasuk yang belum kedeteksi &mdash;
+    ini juga cara menambahkan titik yang kosong). Klik "Hapus" untuk mengosongkan titik lagi.
+  </p>
+
+  <h3>Frame per event ({{ images|length }})</h3>
+  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px; margin-top:14px;">
+    {% for img in images %}
+    <div class="frame-card" data-frame-index="{{ img.frame_index }}">
+      <div class="frame-img-wrap">
+        <img src="{{ img.url }}" alt="{{ img.event }}">
+      </div>
+      <div class="frame-meta">
+        <b>{{ img.event }}</b>
+        <div class="point-status">
+          grip: <span class="grip-status {{ 'ok' if img.grip else 'missing' }}">{{ 'OK' if img.grip else 'kosong' }}</span>
+          &middot;
+          head: <span class="head-status {{ 'ok' if img.head else 'missing' }}">{{ 'OK' if img.head else 'kosong' }}</span>
+        </div>
+        <div class="point-controls">
+          <button type="button" class="point-btn grip" data-label="grip">Edit Grip</button>
+          <button type="button" class="point-btn head" data-label="head">Edit Head</button>
+          <button type="button" class="point-btn clear-grip">Hapus Grip</button>
+          <button type="button" class="point-btn clear-head">Hapus Head</button>
+        </div>
+        <p class="hint-armed" style="display:none;">Klik di gambar untuk menempatkan titik...</p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="actions">
+    <a class="btn secondary" href="{{ json_url }}" download>Download JSON</a>
+    <a class="btn secondary" href="{{ csv_url }}" download>Download CSV</a>
+    <a class="btn" href="{{ zip_url }}" download>Download semua gambar (ZIP)</a>
+  </div>
+</div>
+
+<script>
+(function () {
+  const ROW_ID = {{ row_id | tojson }};
+
+  document.querySelectorAll('.frame-card').forEach(card => {
+    const frameIndex = parseInt(card.dataset.frameIndex, 10);
+    const imgWrap = card.querySelector('.frame-img-wrap');
+    const img = imgWrap.querySelector('img');
+    const hint = card.querySelector('.hint-armed');
+    let armedLabel = null;
+
+    function setArmed(label) {
+      armedLabel = label;
+      card.querySelectorAll('.point-btn.grip, .point-btn.head').forEach(b => b.classList.remove('active'));
+      if (label) {
+        card.querySelector(`.point-btn.${label}`).classList.add('active');
+        imgWrap.classList.add('armed');
+        hint.style.display = 'block';
+      } else {
+        imgWrap.classList.remove('armed');
+        hint.style.display = 'none';
+      }
+    }
+
+    card.querySelector('.point-btn.grip').addEventListener('click', () => setArmed(armedLabel === 'grip' ? null : 'grip'));
+    card.querySelector('.point-btn.head').addEventListener('click', () => setArmed(armedLabel === 'head' ? null : 'head'));
+
+    function savePoint(label, x, y, clear) {
+      return fetch(`/golfdb/${ROW_ID}/point`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frame_index: frameIndex, label, x, y, clear: !!clear }),
+      }).then(r => r.json()).then(data => {
+        if (data.error) { alert(data.error); return; }
+        img.src = data.image_url;
+        const club = data.club || {};
+        card.querySelector('.grip-status').textContent = club.grip ? 'OK' : 'kosong';
+        card.querySelector('.grip-status').className = 'grip-status ' + (club.grip ? 'ok' : 'missing');
+        card.querySelector('.head-status').textContent = club.head ? 'OK' : 'kosong';
+        card.querySelector('.head-status').className = 'head-status ' + (club.head ? 'ok' : 'missing');
+      }).catch(() => alert('Gagal menyimpan titik.'));
+    }
+
+    img.addEventListener('click', (e) => {
+      if (!armedLabel) return;
+      const rect = img.getBoundingClientRect();
+      const scaleX = img.naturalWidth / rect.width;
+      const scaleY = img.naturalHeight / rect.height;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      const label = armedLabel;
+      setArmed(null);
+      savePoint(label, x, y, false);
+    });
+
+    card.querySelector('.clear-grip').addEventListener('click', () => savePoint('grip', 0, 0, true));
+    card.querySelector('.clear-head').addEventListener('click', () => savePoint('head', 0, 0, true));
+  });
+
+  document.getElementById('btnReprocess').addEventListener('click', () => {
+    if (!confirm(`Proses ulang id ${ROW_ID}? Ini menjalankan deteksi dari awal dan menimpa hasil lama -- termasuk titik grip/head yang pernah kamu edit manual di halaman ini.`)) return;
+    fetch('/golfdb/process', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'selected', ids: [ROW_ID], no_club: false }),
+    }).then(r => r.json()).then(data => {
+      if (data.error) { alert(data.error); return; }
+      document.getElementById('reprocessPanel').classList.add('show');
+      pollReprocess();
+    }).catch(() => alert('Gagal memulai proses ulang.'));
+  });
+
+  let reprocessTimer = null;
+  function pollReprocess() {
+    fetch('/golfdb/job_status').then(r => r.json()).then(st => {
+      const pct = st.frames_total ? Math.round(100 * st.frames_done / st.frames_total) : 0;
+      document.getElementById('reprocessBar').style.width = pct + '%';
+      document.getElementById('reprocessLabel').textContent =
+        `${st.frames_done}/${st.frames_total} frame (${pct}%)`;
+      document.getElementById('reprocessHeadline').textContent = st.running
+        ? `Memproses ulang id ${st.current_id} -- frame ${st.current_frame + 1}/${st.current_frame_total}...`
+        : 'Selesai, memuat ulang halaman...';
+      if (st.running) {
+        reprocessTimer = setTimeout(pollReprocess, 1000);
+      } else {
+        setTimeout(() => { location.reload(); }, 1000);
+      }
+    }).catch(() => { reprocessTimer = setTimeout(pollReprocess, 2000); });
+  }
+})();
+</script>
+{% endblock %}

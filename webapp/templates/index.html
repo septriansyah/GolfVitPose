@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Upload &mdash; easy_ViTPose{% endblock %}
+{% block content %}
+<div class="card">
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data">
+    <div class="field">
+      <label>1. Jenis objek</label>
+      <select name="mode" id="modeSelect">
+        {% for key, cfg in modes.items() %}
+        <option value="{{ key }}">{{ cfg.label }}</option>
+        {% endfor %}
+        <option value="{{ shuttlecock_mode }}">{{ shuttlecock_label }}</option>
+        <option value="{{ combined_mode }}">{{ combined_label }}</option>
+        <option value="{{ court_mode }}">{{ court_label }}</option>
+        <option value="{{ tracknet_mode }}">{{ tracknet_label }}</option>
+        <option value="{{ golf_mode }}">{{ golf_label }}</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>2. Upload gambar atau video (jpg, png, mp4, mov, avi)</label>
+      <input type="file" name="media" id="mediaInput" accept=".jpg,.jpeg,.png,.bmp,.mp4,.mov,.avi" required>
+    </div>
+
+    <div class="field" id="trimControl" style="display:none;">
+      <label>Panjang video yang diproses: <span id="trimLabel">100%</span></label>
+      <input type="range" id="trimSlider" min="10" max="100" value="100" step="5" style="width:100%;">
+      <p id="trimStatus" class="subtitle" style="margin-top:6px; margin-bottom:0;"></p>
+      <button class="btn secondary" type="button" id="trimPreviewBtn" style="margin-top:10px;">Potong &amp; Preview</button>
+      <div id="trimPreviewResult"></div>
+      <input type="hidden" name="trim_pct" id="trimPctInput" value="100">
+    </div>
+
+    <div class="field" id="courtCalibration" style="display:none;">
+      <label>3. Klik 4 sudut lapangan (ganda) berurutan: Kiri-Jauh &rarr; Kanan-Jauh &rarr; Kanan-Dekat &rarr; Kiri-Dekat</label>
+      <canvas id="calibCanvas" style="max-width:100%; cursor:crosshair; border:1px solid var(--border); border-radius:8px; display:block;"></canvas>
+      <p id="calibStatus" class="subtitle" style="margin-top:8px; margin-bottom:0;">Pilih gambar/video dulu di atas.</p>
+      <button class="btn secondary" type="button" id="calibReset" style="margin-top:10px;">Reset titik</button>
+      <input type="hidden" name="corners" id="cornersInput">
+    </div>
+
+    <button class="btn" type="submit">Proses</button>
+  </form>
+
+  <details class="raw" style="margin-top:20px;">
+    <summary>Info &amp; catatan performa</summary>
+    <div class="raw-body">
+      <p class="subtitle" style="margin:0 0 10px;">Video diproses frame-per-frame, jadi bisa makan waktu beberapa menit tergantung durasi.</p>
+      <p class="subtitle" style="margin:0 0 10px;">Mode Shuttlecock, Gabungan, dan Posisi Lapangan manggil Roboflow lewat internet (panggilan API per frame untuk shuttlecock) &mdash; makin panjang video, makin banyak kredit API kepakai &amp; makin lama prosesnya. Mode Gabungan &amp; Posisi Lapangan juga menjalankan deteksi pose ViTPose di setiap frame, jadi termasuk paling lambat.</p>
+      <p class="subtitle" style="margin:0 0 10px;">Untuk mode Posisi Lapangan di video, lapangan cuma dikalibrasi sekali (dari frame pertama, atau klik manual) lalu dipakai buat semua frame &mdash; kalau kamera bergerak/zoom selama video, posisinya bakal makin meleset di frame-frame berikutnya.</p>
+      <p class="subtitle" style="margin:0 0 10px;">Klik 4 sudut lapangan manual untuk hasil paling akurat &mdash; kalau dilewati, sistem coba deteksi otomatis (kurang presisi di beberapa foto/video).</p>
+      <p class="subtitle" style="margin:0 0 10px;">Mode TrackNetV3 jalan sepenuhnya lokal (nggak butuh API key/internet) dan manfaatin info gerakan antar-frame &mdash; lebih akurat buat kok yang kecil/blur dibanding mode Shuttlecock biasa, tapi cuma buat video dan lebih lambat di CPU (nggak ada GPU di server ini).</p>
+      <p class="subtitle" style="margin:0 0 10px;">Mode Golf gabungin skeleton tubuh (ViTPose) dengan titik grip &amp; head club golf (model publik Roboflow, deteksi per frame lewat API) &mdash; model club-nya dataset komunitas kecil, jadi kadang meleset di frame yang club-nya ketutup badan (awal backswing); confidence tiap titik ditampilkan biar kelihatan mana yang meragukan.</p>
+      <p class="subtitle" style="margin:0;">Buat video, ada slider "panjang video yang diproses" &mdash; geser di bawah 100% buat cuma proses bagian awal video (dipotong otomatis sebelum diproses), biar lebih cepat kalau nggak butuh video-nya diproses utuh.</p>
+    </div>
+  </details>
+</div>
+
+<script>
+(function () {
+  var modeSelect = document.getElementById('modeSelect');
+  var mediaInput = document.getElementById('mediaInput');
+  var trimControl = document.getElementById('trimControl');
+  var trimSlider = document.getElementById('trimSlider');
+  var trimLabel = document.getElementById('trimLabel');
+  var trimStatus = document.getElementById('trimStatus');
+  var trimPctInput = document.getElementById('trimPctInput');
+  var trimPreviewBtn = document.getElementById('trimPreviewBtn');
+  var trimPreviewResult = document.getElementById('trimPreviewResult');
+  var trimPreviewUrl = '{{ url_for("trim_preview") }}';
+  var videoDuration = null;
+  var calibDiv = document.getElementById('courtCalibration');
+  var canvas = document.getElementById('calibCanvas');
+  var ctx = canvas.getContext('2d');
+  var statusEl = document.getElementById('calibStatus');
+  var cornersInput = document.getElementById('cornersInput');
+  var resetBtn = document.getElementById('calibReset');
+  var cornerLabels = ['Kiri-Jauh', 'Kanan-Jauh', 'Kanan-Dekat', 'Kiri-Dekat'];
+  var courtModeValue = '{{ court_mode }}';
+  var img = new Image();
+  var points = [];
+  var scale = 1;
+  var imgLoaded = false;
+
+  function isCourtMode() {
+    return modeSelect.value === courtModeValue;
+  }
+
+  function updateVisibility() {
+    calibDiv.style.display = isCourtMode() ? 'block' : 'none';
+  }
+
+  function updateStatus() {
+    if (!imgLoaded) {
+      statusEl.textContent = 'Pilih gambar/video dulu di atas.';
+    } else if (points.length < 4) {
+      statusEl.textContent = 'Klik sudut ke-' + (points.length + 1) + ' (' + cornerLabels[points.length] + ')';
+    } else {
+      statusEl.textContent = 'Semua 4 sudut sudah diklik. Klik "Reset titik" kalau mau ulang.';
+      cornersInput.value = JSON.stringify(points.map(function (p) { return [p.origX, p.origY]; }));
+    }
+  }
+
+  function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (imgLoaded) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    points.forEach(function (p, i) {
+      ctx.beginPath();
+      ctx.arc(p.dispX, p.dispY, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ff3b30';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(String(i + 1), p.dispX + 9, p.dispY - 9);
+    });
+    if (points.length === 4) {
+      ctx.beginPath();
+      ctx.moveTo(points[0].dispX, points[0].dispY);
+      for (var i = 1; i < 4; i++) ctx.lineTo(points[i].dispX, points[i].dispY);
+      ctx.closePath();
+      ctx.strokeStyle = '#ff3b30';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  function setupCanvasFromSource(w, h) {
+    var maxW = 700;
+    scale = Math.min(1, maxW / w);
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+    imgLoaded = true;
+  }
+
+  function loadImageFile(file) {
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      img = new Image();
+      img.onload = function () {
+        setupCanvasFromSource(img.width, img.height);
+        redraw();
+        updateStatus();
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function updateTrimLabel() {
+    var pct = parseInt(trimSlider.value, 10);
+    trimPctInput.value = pct;
+    trimLabel.textContent = pct + '%';
+    if (!videoDuration || !isFinite(videoDuration)) return;
+    var secs = videoDuration * pct / 100;
+    if (pct >= 100) {
+      trimStatus.textContent = 'Video penuh (' + videoDuration.toFixed(1) + ' detik) akan diproses.';
+    } else {
+      trimStatus.textContent = 'Cuma ' + secs.toFixed(1) + ' detik pertama (dari ' + videoDuration.toFixed(1) + ' detik total) yang diproses — sisanya dipotong sebelum dikirim.';
+    }
+  }
+
+  function loadVideoFirstFrame(file) {
+    statusEl.textContent = 'Memuat frame pertama video...';
+    var video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    var url = URL.createObjectURL(file);
+
+    video.addEventListener('loadedmetadata', function onMeta() {
+      video.removeEventListener('loadedmetadata', onMeta);
+      videoDuration = video.duration;
+      trimControl.style.display = 'block';
+      trimSlider.value = 100;
+      updateTrimLabel();
+    });
+    video.addEventListener('loadeddata', function onLoaded() {
+      video.removeEventListener('loadeddata', onLoaded);
+      video.currentTime = 0.05; // nudge forward so a decoded frame is actually available
+    });
+    video.addEventListener('seeked', function onSeeked() {
+      video.removeEventListener('seeked', onSeeked);
+      var tmpCanvas = document.createElement('canvas');
+      tmpCanvas.width = video.videoWidth;
+      tmpCanvas.height = video.videoHeight;
+      tmpCanvas.getContext('2d').drawImage(video, 0, 0, tmpCanvas.width, tmpCanvas.height);
+      img = new Image();
+      img.onload = function () {
+        setupCanvasFromSource(img.width, img.height);
+        redraw();
+        updateStatus();
+        URL.revokeObjectURL(url);
+      };
+      img.src = tmpCanvas.toDataURL('image/jpeg', 0.9);
+    });
+    video.src = url;
+    video.load();
+  }
+
+  mediaInput.addEventListener('change', function () {
+    var file = mediaInput.files[0];
+    points = [];
+    cornersInput.value = '';
+    imgLoaded = false;
+    videoDuration = null;
+    trimControl.style.display = 'none';
+    trimSlider.value = 100;
+    trimPctInput.value = 100;
+    trimPreviewResult.innerHTML = '';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!file) {
+      updateStatus();
+      return;
+    }
+    if (file.type.indexOf('image/') === 0) {
+      loadImageFile(file);
+    } else if (file.type.indexOf('video/') === 0) {
+      loadVideoFirstFrame(file);
+    } else {
+      updateStatus();
+    }
+  });
+
+  trimSlider.addEventListener('input', function () {
+    updateTrimLabel();
+    trimPreviewResult.innerHTML = '';
+  });
+
+  trimPreviewBtn.addEventListener('click', function () {
+    var file = mediaInput.files[0];
+    if (!file) return;
+    trimPreviewBtn.disabled = true;
+    trimPreviewBtn.textContent = 'Memotong...';
+    trimPreviewResult.innerHTML = '';
+
+    var fd = new FormData();
+    fd.append('media', file);
+    fd.append('trim_pct', trimPctInput.value);
+
+    fetch(trimPreviewUrl, { method: 'POST', body: fd })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        trimPreviewBtn.disabled = false;
+        trimPreviewBtn.textContent = 'Potong & Preview';
+        if (!res.ok || res.data.error) {
+          trimPreviewResult.innerHTML = '<p class="subtitle" style="color:var(--err); margin:8px 0 0;">' +
+            (res.data.error || 'Gagal memotong video.') + '</p>';
+          return;
+        }
+        trimPreviewResult.innerHTML =
+          '<video class="result" controls src="' + res.data.url + '"></video>' +
+          '<a class="btn secondary" style="margin-top:8px;" href="' + res.data.url + '" download>Download hasil potongan</a>';
+      })
+      .catch(function () {
+        trimPreviewBtn.disabled = false;
+        trimPreviewBtn.textContent = 'Potong & Preview';
+        trimPreviewResult.innerHTML = '<p class="subtitle" style="color:var(--err); margin:8px 0 0;">Gagal memotong video.</p>';
+      });
+  });
+
+  canvas.addEventListener('click', function (e) {
+    if (!imgLoaded || points.length >= 4) return;
+    var rect = canvas.getBoundingClientRect();
+    var dispX = e.clientX - rect.left;
+    var dispY = e.clientY - rect.top;
+    points.push({ dispX: dispX, dispY: dispY, origX: dispX / scale, origY: dispY / scale });
+    redraw();
+    updateStatus();
+  });
+
+  resetBtn.addEventListener('click', function () {
+    points = [];
+    cornersInput.value = '';
+    redraw();
+    updateStatus();
+  });
+
+  modeSelect.addEventListener('change', updateVisibility);
+  updateVisibility();
+  updateStatus();
+})();
+</script>
+{% endblock %}

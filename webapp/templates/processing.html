@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Memproses... &mdash; easy_ViTPose{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 id="titleText">Memproses&hellip;</h2>
+  <p class="subtitle" id="msgText">Menyiapkan...</p>
+
+  <div class="progress-outer">
+    <div class="progress-inner" id="progressBar" style="width: 0%;"></div>
+  </div>
+  <p class="progress-label" id="progressLabel">0%</p>
+  <p class="subtitle" id="elapsedText" style="margin-top:4px; margin-bottom:0;"></p>
+
+  <p class="subtitle" id="hintText" style="margin-top:18px;">
+    Video diproses frame-per-frame di CPU, jadi progress bar untuk video mungkin bergerak pelan &mdash; jangan tutup halaman ini.
+  </p>
+</div>
+
+<script>
+const jobId = "{{ job_id }}";
+const startedAt = Date.now();
+let fakePos = 0;
+
+function formatElapsed(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function poll() {
+  fetch(`/progress/${jobId}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'error') {
+        document.getElementById('titleText').textContent = 'Gagal memproses';
+        document.getElementById('msgText').textContent = data.error || 'Terjadi kesalahan.';
+        document.getElementById('hintText').innerHTML =
+          '<a href="/">Kembali dan coba lagi</a>';
+        return;
+      }
+      if (data.status === 'done') {
+        document.getElementById('progressBar').style.width = '100%';
+        document.getElementById('progressLabel').textContent = '100%';
+        document.getElementById('titleText').textContent = 'Selesai';
+        document.getElementById('msgText').textContent = 'Mengalihkan ke halaman hasil...';
+        setTimeout(() => { window.location.href = `/result/${jobId}`; }, 500);
+        return;
+      }
+
+      document.getElementById('msgText').textContent = data.message || 'Memproses...';
+      document.getElementById('elapsedText').textContent =
+        'Sudah berjalan: ' + formatElapsed(Date.now() - startedAt) +
+        ' -- proses ini masih aktif walau progress bar di bawah tidak bergerak.';
+
+      // Gambar, atau video tanpa progress per-frame (mis. TrackNetV3, yang
+      // manggil 1 proses besar tanpa update sampai selesai): progress
+      // numerik nggak berarti apa-apa, jadi tampilkan animasi indeterminate
+      // biar tetap kelihatan "hidup" alih-alih macet di 0%.
+      const hasRealProgress = data.kind !== 'image' && (data.total || 0) > 1;
+      if (!hasRealProgress) {
+        fakePos = (fakePos + 12) % 100;
+        document.getElementById('progressBar').style.width = Math.min(85, fakePos + 15) + '%';
+        document.getElementById('progressLabel').textContent = 'Memproses...';
+      } else {
+        document.getElementById('progressBar').style.width = data.percent + '%';
+        document.getElementById('progressLabel').textContent =
+          `${data.percent}% (frame ${data.current}/${data.total})`;
+      }
+      setTimeout(poll, 500);
+    })
+    .catch(() => setTimeout(poll, 1000));
+}
+poll();
+</script>
+{% endblock %}
